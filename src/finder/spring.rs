@@ -128,7 +128,7 @@ fn normalise_path(p: &str) -> String {
 
 /// Path match: exact segment comparison (with `{param}` wildcards) OR
 /// suffix match — the user may supply only the method-level part of the path
-/// (e.g. `/autoAlignTopologyTable`) when the class has a prefix (`/topology`).
+/// when the class has a prefix.
 ///
 /// Important: `{param}` in the REGISTERED path is only treated as a wildcard
 /// on a FULL-LENGTH match. In suffix matches, only the USER's `{param}` patterns
