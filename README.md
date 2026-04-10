@@ -1,6 +1,6 @@
-# code-mole
+# codemole
 
-**code-mole** is a CLI tool that traces an API endpoint through your source code and generates sequence and class/flow diagrams.
+**codemole** is a CLI tool that traces an API endpoint through your source code and generates sequence and class/flow diagrams.
 
 ---
 
@@ -11,7 +11,7 @@
 3. **Generate** — Produces a PlantUML sequence diagram (`.puml`) and a Graphviz class/flow diagram (`.dot`).
 4. **Render** — Calls `plantuml` and `dot` when available; falls back to a pure-Rust SVG renderer otherwise. Also writes self-contained HTML viewers with pan/zoom support.
 
-For Java projects that use interfaces (Spring `@Controller` + implementation class, OpenAPI-generated stubs, Feign clients, etc.), code-mole detects that the matched class is an interface, finds the concrete implementation, and builds the call graph from the real business logic.
+For Java projects that use interfaces (Spring `@Controller` + implementation class, OpenAPI-generated stubs, Feign clients, etc.), codemole detects that the matched class is an interface, finds the concrete implementation, and builds the call graph from the real business logic.
 
 ---
 
@@ -30,10 +30,10 @@ For Java projects that use interfaces (Spring `@Controller` + implementation cla
 ### From source (requires Rust ≥ 1.81)
 
 ```bash
-git clone https://github.com/youruser/code-mole
-cd code-mole
+git clone https://github.com/javisarria/codemole
+cd codemole
 cargo build --release
-# binary is at ./target/release/code-mole
+# binary is at ./target/release/codemole
 ```
 
 To install globally:
@@ -56,7 +56,7 @@ Both are optional. If absent, the built-in Rust renderer is used instead.
 ## Usage
 
 ```
-code-mole --lang <LANG> --endpoint <PATH> [--path <DIR>] [--output <DIR>] [--db <FILE>]
+codemole --lang <LANG> --endpoint <PATH> [--path <DIR>] [--output <DIR>] [--db <FILE>]
 ```
 
 ### Options
@@ -75,13 +75,13 @@ code-mole --lang <LANG> --endpoint <PATH> [--path <DIR>] [--output <DIR>] [--db 
 
 ```bash
 # Java / Spring Boot
-code-mole --lang java --endpoint /api/users --path ./my-spring-project --output ./diagrams
+codemole --lang java --endpoint /api/users --path ./my-spring-project --output ./diagrams
 
 # Python / FastAPI
-code-mole --lang python --endpoint /items/{id} --path ./my-fastapi-project --output ./diagrams
+codemole --lang python --endpoint /items/{id} --path ./my-fastapi-project --output ./diagrams
 
 # Go / Gin
-code-mole --lang go --endpoint /health --path ./my-gin-project --output ./diagrams
+codemole --lang go --endpoint /health --path ./my-gin-project --output ./diagrams
 ```
 
 Path parameters are treated as wildcards — `/items/{id}` matches `/items/{item_id}` in FastAPI or `/items/:id` in Gin.
@@ -158,7 +158,7 @@ digraph classflow {
 
 ## Skip-symbols database
 
-code-mole uses an SQLite database (`symbols.db`) to decide which function calls to skip during BFS traversal. The database is created automatically on the first run and seeded with built-in defaults for each language (stdlib calls, common framework helpers, logging utilities, etc.).
+codemole uses an SQLite database (`symbols.db`) to decide which function calls to skip during BFS traversal. The database is created automatically on the first run and seeded with built-in defaults for each language (stdlib calls, common framework helpers, logging utilities, etc.).
 
 **You can extend or trim the list without recompiling** — use any SQLite client:
 
@@ -230,7 +230,7 @@ A definition index is built by scanning every source file for function/method de
 ## Project structure
 
 ```
-code-mole/
+codemole/
 ├── Cargo.toml
 ├── viewer/
 │   ├── viewer.html              # HTML viewer template (embedded at compile time)
