@@ -1,0 +1,21 @@
+[package]
+name = "code-mole"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "code-mole"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+walkdir = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[profile.release]
+opt-level = 3        # 0–3 (o "z" para tamaño)
+lto = true           # Link Time Optimization
+codegen-units = 1    # Mejor optimización (más lento al compilar)
+panic = "abort"      # Reduce tamaño del binario
+strip = true         # Elimina símbolos (Rust 1. strip estable)

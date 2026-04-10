@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="svg-pan-zoom.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, sans-serif;
+      background: #1a1b26;
+      color: #c0caf5;
+    }
+
+    /* ─── Toolbar ──────────────────────────────────────────────────── */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      background: #24283b;
+      border-bottom: 1px solid #3b4261;
+      height: 42px;
+      flex-shrink: 0;
+    }
+    #search {
+      width: 220px;
+      padding: 4px 9px;
+      border: 1px solid #3b4261;
+      border-radius: 5px;
+      background: #1a1b26;
+      color: #c0caf5;
+      font-size: 13px;
+      outline: none;
+    }
+    #search::placeholder { color: #565f89; }
+    #search:focus { border-color: #7aa2f7; }
+    #match-info {
+      font-size: 12px;
+      color: #7aa2f7;
+      min-width: 60px;
+    }
+    .sep { width: 1px; height: 22px; background: #3b4261; flex-shrink: 0; }
+    .btn {
+      padding: 4px 10px;
+      border: 1px solid #3b4261;
+      border-radius: 5px;
+      background: #292e42;
+      color: #c0caf5;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      line-height: 1;
+    }
+    .btn:hover  { background: #3b4261; border-color: #7aa2f7; color: #7aa2f7; }
+    .btn:active { background: #1a1b26; }
+
+    /* ─── Diagram container ─────────────────────────────────────────── */
+    #container {
+      width: 100%;
+      height: calc(100% - 42px);
+      cursor: grab;
+    }
+    #container:active {
+        cursor: grabbing;
+    }
+    #container svg {
+      width: 100% !important;
+      height: 100% !important;
+      background: #fafafa;
+    }
+    /* navegación */
+    #container svg text {
+    pointer-events: none;
+    user-select: none;
+    }
+
+    /* selección */
+    #container.select-mode svg,
+    #container.select-mode svg * {
+    user-select: text !important;
+    }
+
+    #container.select-mode svg text {
+        pointer-events: auto !important;
+        user-select: text !important;
+    }
+
+    /* MUY IMPORTANTE: desactivar formas */
+    #container.select-mode svg rect,
+    #container.select-mode svg path,
+    #container.select-mode svg polygon,
+    #container.select-mode svg ellipse,
+    #container.select-mode svg line {
+        pointer-events: none !important;
+    }
+    
+    /* ─── Node / edge visual states ─────────────────────────────────── */
+    g.node.node-match > path,
+    g.node.node-match > polygon,
+    g.node.node-match > ellipse,
+    g.node.node-match > rect {
+      stroke: #f7768e !important;
+      stroke-width: 3px !important;
+    }
+    g.node.node-dim { opacity: 0.1; }
+    g.edge.edge-dim { opacity: 0.08; }
+
+    g.edge.edge-hl > path    { stroke: #f7768e !important; stroke-width: 2.5px !important; }
+    g.edge.edge-hl > polygon { fill: #f7768e !important; stroke: #f7768e !important; }
+
+    /* ─── Tooltip ────────────────────────────────────────────────────── */
+    #tip {
+      position: fixed;
+      padding: 7px 11px;
+      background: rgba(26, 27, 38, 0.95);
+      color: #c0caf5;
+      font-size: 12px;
+      border-radius: 6px;
+      border: 1px solid #3b4261;
+      pointer-events: none;
+      display: none;
+      max-width: 360px;
+      white-space: pre;
+      word-break: break-word;
+      z-index: 9999;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <input id="search" type="search" placeholder="Buscar nodo… (Ctrl+K)" autocomplete="off">
+    <span id="match-info"></span>
+    <button class="btn" id="btn-prev" title="Anterior (↑)">◀</button>
+    <button class="btn" id="btn-next" title="Siguiente (↓ / Enter)">▶</button>
+    <div class="sep"></div>
+    <button class="btn" id="btn-fit"   title="Ajustar al contenido">Fit</button>
+    <button class="btn" id="btn-reset" title="Restaurar zoom y posición">Reset</button>
+    <button class="btn" id="btn-in"    title="Zoom +">＋</button>
+    <button class="btn" id="btn-out"   title="Zoom −">－</button>
+    <div class="sep"></div>
+    <button class="btn" id="btn-clear" title="Limpiar selección (Esc)">✕ Limpiar</button>
+  </div>
+
+  <div id="container">
+    <!-- SVG_PLACEHOLDER -->
+  </div>
+
+  <div id="tip"></div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    const tip       = document.getElementById("tip");
+    const searchBox = document.getElementById("search");
+    const matchInfo = document.getElementById("match-info");
+    const $ = id => document.getElementById(id);
+
+    // ── Init pan-zoom ─────────────────────────────────────────────────────
+    const svg = document.querySelector("#container svg");
+    let pz = null;
+    if (svg) {
+      pz = svgPanZoom(svg, {
+        zoomEnabled: true,
+        controlIconsEnabled: false,
+        dblClickZoomEnabled: true,
+        mouseWheelZoomEnabled: true,
+        preventMouseEventsDefault: true,
+        fit: true,
+        center: true,
+        minZoom: 0.05,
+        maxZoom: 50
+      });
+    }
+
+    // ── Toolbar buttons ───────────────────────────────────────────────────
+    $("btn-fit").onclick   = () => { if (pz) { pz.fit(); pz.center(); } };
+    $("btn-reset").onclick = () => { if (pz) { pz.resetZoom(); pz.resetPan(); } };
+    $("btn-in").onclick    = () => pz && pz.zoomIn();
+    $("btn-out").onclick   = () => pz && pz.zoomOut();
+    $("btn-clear").onclick = clearAll;
+    $("btn-prev").onclick  = () => navigate(-1);
+    $("btn-next").onclick  = () => navigate(+1);
+
+    // ── Node / edge detection ─────────────────────────────────────────────
+    // Three SVG flavours are supported:
+    //   isGraphviz   — Graphviz DOT: g.node / g.edge with <title>
+    //   isPlantUML   — PlantUML sequence: g.participant.participant-head
+    //   isNativeSeq  — Native renderer: rect.part-box + text.part-lab pairs
+    const isGraphviz  = !!svg && !!svg.querySelector("g.node");
+    const isPlantUML  = !isGraphviz && !!svg && !!svg.querySelector("g.participant.participant-head");
+    const allNodes    = isGraphviz ? [...svg.querySelectorAll("g.node")] : [];
+    const allEdges    = isGraphviz ? [...svg.querySelectorAll("g.edge")] : [];
+
+    // PlantUML participants: g.participant.participant-head contains rect + text.
+    const plantParts  = isPlantUML
+      ? [...svg.querySelectorAll("g.participant.participant-head")].map(g => ({
+          g,
+          rect: g.querySelector("rect"),
+          text: g.querySelector("text")
+        })).filter(p => p.rect && p.text)
+      : [];
+
+    // Native renderer participants: rect.part-box immediately before text.part-lab.
+    const seqParts = (!isGraphviz && !isPlantUML && svg)
+      ? [...svg.querySelectorAll("text.part-lab")].map(t => {
+          const prev = t.previousElementSibling;
+          return (prev && prev.classList.contains("part-box"))
+            ? { rect: prev, text: t }
+            : null;
+        }).filter(Boolean)
+      : [];
+    const isNativeSeq = seqParts.length > 0;
+
+    // Native renderer message/return-type labels on arrows.
+    const seqMsgTexts = isNativeSeq
+      ? [...svg.querySelectorAll("text.msg-text, text.ret-text")]
+      : [];
+
+    // PlantUML message labels: all text elements not inside a participant group.
+    const plantMsgTexts = isPlantUML
+      ? [...svg.querySelectorAll("text")].filter(t => !t.closest("g.participant") && t.textContent.trim())
+      : [];
+
+    // The <title> is the DOT node name — used for edge-to-node correlation.
+    function nodeTitle(g) {
+      const t = g.querySelector("title");
+      return t ? t.textContent.trim() : "";
+    }
+    // Edge <title> is "From->To" — browser decodes &#45; and &gt; automatically.
+    function edgeTitle(g) {
+      const t = g.querySelector("title");
+      return t ? t.textContent : "";
+    }
+    // For search: match against all visible text inside the node group.
+    function nodeText(g) {
+      return g.textContent.toLowerCase();
+    }
+
+    // ── Pan to element ────────────────────────────────────────────────────
+    // Graphviz SVGs have an internal transform="translate(4,808.5)" that flips
+    // the Y axis, making getBBox() return negative Y values. Using getBBox()
+    // coordinates directly with svg-pan-zoom's pan() produces wrong results.
+    //
+    // Strategy:
+    //   1. getBoundingClientRect() on the element → true CSS-pixel position on screen.
+    //   2. getBoundingClientRect() on the SVG element → SVG origin on screen.
+    //   3. Derive the element center in SVG-viewport coordinates (CSS px from SVG origin).
+    //   4. Auto-zoom: if the element's rendered height < TARGET_FONT_CSS_PX, zoom
+    //      in so text becomes legible. Only zooms IN, never reduces current zoom.
+    //   5. Re-derive center after zoom and call pz.pan() to center it.
+    //
+    // This approach is transform-agnostic and works for Graphviz, PlantUML, and
+    // the native Rust renderer regardless of internal coordinate systems or units.
+
+    const TARGET_FONT_CSS_PX = 13; // minimum legible rendered font height in CSS px
+
+    function panToEl(el) {
+      if (!pz || !svg) return;
+      try {
+        const elRect  = el.getBoundingClientRect();
+        const svgRect = svg.getBoundingClientRect();
+
+        // Current rendered size of the element in CSS pixels.
+        const renderedH = elRect.height;
+        const renderedW = elRect.width;
+
+        // Auto-zoom: find how many CSS px one SVG unit currently maps to,
+        // then compute the zoom needed so that the diagram font hits TARGET_FONT_CSS_PX.
+        // We detect font size from the SVG itself (attribute or inline style).
+        if (renderedH > 0) {
+          // Estimate font-size in CSS px from a text element inside the target.
+          const sampleText = el.querySelector
+            ? (el.querySelector("text") || svg.querySelector("text"))
+            : svg.querySelector("text");
+          let fontCssPx = TARGET_FONT_CSS_PX; // assume already legible
+          if (sampleText) {
+            const tr = sampleText.getBoundingClientRect();
+            if (tr.height > 0) fontCssPx = tr.height;
+          }
+          if (fontCssPx < TARGET_FONT_CSS_PX) {
+            // Scale up so font reaches TARGET_FONT_CSS_PX.
+            const factor = TARGET_FONT_CSS_PX / fontCssPx;
+            pz.zoom(pz.getZoom() * factor);
+          }
+        }
+
+        // After potential zoom, recalculate positions.
+        const elRect2  = el.getBoundingClientRect();
+        const svgRect2 = svg.getBoundingClientRect();
+        const sizes    = pz.getSizes();
+
+        // Center of the element in CSS px relative to the SVG's top-left corner.
+        const elCxInSvg = (elRect2.left + elRect2.width  / 2) - svgRect2.left;
+        const elCyInSvg = (elRect2.top  + elRect2.height / 2) - svgRect2.top;
+
+        // Pan so the element center aligns with the viewport center.
+        const currentPan = pz.getPan();
+        pz.pan({
+          x: currentPan.x + (sizes.width  / 2 - elCxInSvg),
+          y: currentPan.y + (sizes.height / 2 - elCyInSvg)
+        });
+      } catch (_) {}
+    }
+
+    // ── Search ────────────────────────────────────────────────────────────
+    let matches = [], matchCursor = -1;
+
+    function clearSearch() {
+      allNodes.forEach(n => n.classList.remove("node-match", "node-dim"));
+      seqParts.forEach(p => {
+        p.rect.style.stroke      = "";
+        p.rect.style.strokeWidth = "";
+        p.rect.style.opacity     = "";
+      });
+      seqMsgTexts.forEach(t => { t.style.fill = ""; t.style.fontWeight = ""; t.style.opacity = ""; });
+      plantParts.forEach(p => {
+        p.rect.style.stroke      = "";
+        p.rect.style.strokeWidth = "";
+        p.g.style.opacity        = "";
+      });
+      plantMsgTexts.forEach(t => { t.style.fill = ""; t.style.fontWeight = ""; t.style.opacity = ""; });
+      matches = [];
+      matchCursor = -1;
+      matchInfo.textContent = "";
+    }
+
+    function updateMatchInfo() {
+      matchInfo.textContent = matches.length
+        ? `${matchCursor + 1} / ${matches.length}`
+        : (searchBox.value.trim() ? "—" : "");
+    }
+
+    function runSearch(term) {
+      clearSearch();
+      if (!term) return;
+      if (isGraphviz) {
+        matches = allNodes.filter(n => nodeText(n).includes(term));
+        allNodes.forEach(n => n.classList.toggle("node-dim", !matches.includes(n)));
+        matches.forEach(n => n.classList.add("node-match"));
+        if (matches.length) { matchCursor = 0; panToEl(matches[0]); }
+        updateMatchInfo();
+      } else if (isPlantUML) {
+        const hitParts = plantParts.filter(p =>
+          p.text.textContent.toLowerCase().includes(term)
+        );
+        const hitMsgs = plantMsgTexts.filter(t =>
+          t.textContent.toLowerCase().includes(term)
+        );
+        const hasHit = hitParts.length + hitMsgs.length > 0;
+        plantParts.forEach(p => {
+          const isMatch = hitParts.includes(p);
+          p.rect.style.stroke      = isMatch ? "#f7768e" : "";
+          p.rect.style.strokeWidth = isMatch ? "4"       : "";
+          p.g.style.opacity        = (!isMatch && hasHit) ? "0.15" : "";
+        });
+        plantMsgTexts.forEach(t => {
+          const isMatch = hitMsgs.includes(t);
+          t.style.fill       = isMatch ? "#f7768e" : "";
+          t.style.fontWeight = isMatch ? "bold"    : "";
+          t.style.opacity    = (!isMatch && hasHit && hitMsgs.length) ? "0.25" : "";
+        });
+        matches = [...hitParts.map(p => p.rect), ...hitMsgs];
+        if (matches.length) { matchCursor = 0; panToEl(matches[0]); }
+        updateMatchInfo();
+      } else if (isNativeSeq) {
+        const hitParts = seqParts.filter(p =>
+          p.text.textContent.toLowerCase().includes(term)
+        );
+        const hitMsgs = seqMsgTexts.filter(t =>
+          t.textContent.toLowerCase().includes(term)
+        );
+        const hasHit = hitParts.length + hitMsgs.length > 0;
+        seqParts.forEach(p => {
+          const isMatch = hitParts.includes(p);
+          p.rect.style.stroke      = isMatch ? "#f7768e" : "";
+          p.rect.style.strokeWidth = isMatch ? "4"      : "";
+          p.rect.style.opacity     = (!isMatch && hasHit) ? "0.25" : "";
+        });
+        seqMsgTexts.forEach(t => {
+          const isMatch = hitMsgs.includes(t);
+          t.style.fill       = isMatch ? "#f7768e" : "";
+          t.style.fontWeight = isMatch ? "bold"    : "";
+          t.style.opacity    = (!isMatch && hasHit && hitMsgs.length) ? "0.25" : "";
+        });
+        matches = [...hitParts.map(p => p.rect), ...hitMsgs];
+        if (matches.length) { matchCursor = 0; panToEl(matches[0]); }
+        updateMatchInfo();
+      } else {
+        // generic fallback: colour matching text elements
+        svg && svg.querySelectorAll("text").forEach(t => {
+          const isMatch = t.textContent.toLowerCase().includes(term);
+          t.style.fill       = isMatch ? "#f7768e" : "";
+          t.style.fontWeight = isMatch ? "bold"    : "";
+        });
+      }
+    }
+
+    function navigate(dir) {
+      if (!matches.length) return;
+      matchCursor = (matchCursor + dir + matches.length) % matches.length;
+      panToEl(matches[matchCursor]);
+      updateMatchInfo();
+    }
+
+    searchBox.addEventListener("input",   e => runSearch(e.target.value.trim().toLowerCase()));
+    searchBox.addEventListener("paste",   ()  => setTimeout(() => runSearch(searchBox.value.trim().toLowerCase()), 0));
+    searchBox.addEventListener("keydown", e => {
+      if      (e.key === "Enter" || e.key === "ArrowDown") { e.preventDefault(); navigate(+1); }
+      else if (e.key === "ArrowUp")                        { e.preventDefault(); navigate(-1); }
+    });
+
+    // ── Click → highlight connected edges ────────────────────────────────
+    let activeNode = null;
+
+    function clearEdge() {
+      allEdges.forEach(e => e.classList.remove("edge-hl", "edge-dim"));
+      allNodes.forEach(n => n.classList.remove("node-dim"));
+      activeNode = null;
+    }
+
+    function highlightEdges(nodeG) {
+      if (nodeG === activeNode) { clearEdge(); return; }
+      clearEdge();
+      activeNode = nodeG;
+      const name      = nodeTitle(nodeG);
+      const connected = new Set([name]);
+
+      allEdges.forEach(e => {
+        const et = edgeTitle(e);
+        if (et.includes(name)) {
+          e.classList.add("edge-hl");
+          // collect both endpoints (edge title format: "A->B")
+          et.split("->").map(s => s.trim()).forEach(p => connected.add(p));
+        } else {
+          e.classList.add("edge-dim");
+        }
+      });
+
+      // dim nodes that are not part of the subgraph
+      allNodes.forEach(n => {
+        if (!connected.has(nodeTitle(n))) n.classList.add("node-dim");
+      });
+    }
+
+    if (isGraphviz) {
+      allNodes.forEach(n => {
+        n.style.cursor = "pointer";
+        n.addEventListener("click", e => { e.stopPropagation(); highlightEdges(n); });
+      });
+      // click on background clears edge highlight
+      svg.addEventListener("click", () => { if (activeNode) clearEdge(); });
+    }
+
+    // ── Tooltips ──────────────────────────────────────────────────────────
+    if (isGraphviz) {
+      allNodes.forEach(nodeG => {
+        const name  = nodeTitle(nodeG);
+        const texts = [...nodeG.querySelectorAll("text")]
+          .map(t => t.textContent.trim())
+          .filter(t => t && t !== name);
+        const content = texts.length
+          ? `${name}\n─────────────────\n${texts.join("\n")}`
+          : name;
+
+        nodeG.addEventListener("mousemove", e => {
+          tip.style.display = "block";
+          tip.style.left    = (e.clientX + 16) + "px";
+          tip.style.top     = Math.min(e.clientY + 16, window.innerHeight - 130) + "px";
+          tip.textContent   = content;
+        });
+        nodeG.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      });
+    }
+
+    // ── Clear all ─────────────────────────────────────────────────────────
+    function clearAll() {
+      clearSearch();
+      clearEdge();
+      searchBox.value = "";
+      tip.style.display = "none";
+      if (!isNativeSeq && svg) {
+        svg.querySelectorAll("text").forEach(t => {
+          t.style.fill = t.style.fontWeight = "";
+        });
+      }
+    }
+
+    // ── Keyboard shortcuts ────────────────────────────────────────────────
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") { clearAll(); }
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        searchBox.focus();
+        searchBox.select();
+      }
+    });
+
+    // ── Text-select mode (hold Shift to select text in the diagram) ─────────
+    // svg-pan-zoom registers mousedown in bubble phase. We intercept it in
+    // capture phase (fires first on the same element) and call
+    // stopImmediatePropagation() so svg-pan-zoom never sees the event.
+    // We do NOT call preventDefault(), which lets the browser initiate
+    // native text selection on the underlying SVG text elements.
+    const container = document.getElementById("container");
+
+    if (svg) {
+      ["mousedown", "dblclick"].forEach(type => {
+        svg.addEventListener(type, e => {
+          if (container.classList.contains("select-mode")) {
+            e.stopImmediatePropagation();
+          }
+        }, true); // capture phase — runs before svg-pan-zoom's bubble listeners
+      });
+    }
+
+    document.addEventListener("keydown", e => {
+      if (e.key === "Shift") {
+        container.classList.add("select-mode");
+        if (pz) { pz.disablePan(); pz.disableZoom(); }
+      }
+    });
+
+    document.addEventListener("keyup", e => {
+      if (e.key === "Shift") {
+        container.classList.remove("select-mode");
+        if (pz) { pz.enablePan(); pz.enableZoom(); }
+      }
+    });
+
+  })();
+  </script>
+</body>
+</html>
