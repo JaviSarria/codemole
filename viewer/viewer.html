@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <script src="svg-pan-zoom.min.js"></script>
+  <script><!-- SVGPANZOOM_PLACEHOLDER --></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -164,7 +164,8 @@
     const svg = document.querySelector("#container svg");
     let pz = null;
     if (svg) {
-      pz = svgPanZoom(svg, {
+      try {
+        pz = svgPanZoom(svg, {
         zoomEnabled: true,
         controlIconsEnabled: false,
         dblClickZoomEnabled: true,
@@ -175,6 +176,7 @@
         minZoom: 0.05,
         maxZoom: 50
       });
+      } catch(e) { console.warn("[codemole] svgPanZoom failed:", e); }
     }
 
     // ── Toolbar buttons ───────────────────────────────────────────────────
@@ -474,6 +476,58 @@
           tip.textContent   = content;
         });
         nodeG.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      });
+    }
+
+    // ── Arrow tooltips (call/return lines in native sequence renderer) ────
+    if (isNativeSeq && svg) {
+      const arrowSel = [
+        "line.arrow[data-label]",
+        "rect.msg-box[data-label]",
+        "line.ret-arrow[data-label]",
+        "rect.ret-hitpad[data-label]"
+      ].join(", ");
+      const arrowEls = [...svg.querySelectorAll(arrowSel)];
+      console.log("[codemole] isNativeSeq=true, arrow elements found:", arrowEls.length, arrowEls);
+      arrowEls.forEach(el => {
+        const label  = el.getAttribute("data-label");
+        const kind   = el.getAttribute("data-kind");
+        const prefix = kind === "return" ? "↩ " : "→ ";
+        el.addEventListener("mouseenter", e => {
+          tip.textContent   = prefix + label;
+          tip.style.left    = (e.clientX + 16) + "px";
+          tip.style.top     = Math.min(e.clientY + 16, window.innerHeight - 80) + "px";
+          tip.style.display = "block";
+        });
+        el.addEventListener("mousemove", e => {
+          tip.style.left = (e.clientX + 16) + "px";
+          tip.style.top  = Math.min(e.clientY + 16, window.innerHeight - 80) + "px";
+        });
+        el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      });
+    } else {
+      console.log("[codemole] arrow tooltips skipped — isNativeSeq:", isNativeSeq, "svg:", !!svg);
+    }
+
+    // ── Lifeline tooltips (native sequence renderer) ──────────────────────
+    if (isNativeSeq && svg) {
+      // Use the wide transparent rect hit-pad (life-hit); fall back to the line itself
+      const lifeEls = svg.querySelectorAll("rect.life-hit[data-participant], line.life-line[data-participant]");
+      lifeEls.forEach(el => {
+        const name = el.getAttribute("data-participant");
+        el.style.pointerEvents = el.tagName.toLowerCase() === "rect" ? "all" : "stroke";
+        el.style.cursor = "crosshair";
+        el.addEventListener("mouseenter", e => {
+          tip.textContent   = name;
+          tip.style.left    = (e.clientX + 16) + "px";
+          tip.style.top     = Math.min(e.clientY + 16, window.innerHeight - 80) + "px";
+          tip.style.display = "block";
+        });
+        el.addEventListener("mousemove", e => {
+          tip.style.left = (e.clientX + 16) + "px";
+          tip.style.top  = Math.min(e.clientY + 16, window.innerHeight - 80) + "px";
+        });
+        el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
       });
     }
 

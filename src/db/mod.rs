@@ -125,6 +125,7 @@ fn seed_defaults(conn: &Connection) -> Result<()> {
         "builder_pattern",
         "datetime_methods",
         "reflection",
+        "enum_methods",
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO skip_categories(name) VALUES (?1)",
@@ -280,6 +281,13 @@ fn seed_java(conn: &Connection) -> Result<()> {
         "getMessage", "getCause", "getLocalizedMessage", "printStackTrace",
         "getStackTrace", "initCause",
         "max", "min",
+    ])?;
+
+    insert_symbols(conn, "java", "enum_methods", &[
+        // java.lang.Enum API
+        "values", "valueOf", "ordinal", "name", "getDeclaringClass",
+        // Enum also inherits these (already in object_methods, but explicit here for clarity)
+        "compareTo",
     ])?;
 
     Ok(())

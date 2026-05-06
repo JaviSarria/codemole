@@ -1,0 +1,86 @@
+digraph classflow {
+  graph [rankdir=TB, bgcolor="white", splines=ortho, nodesep=0.8, ranksep=1.4, fontname="Helvetica"];
+  node [shape=none, margin=0, fontname="Helvetica", fontsize=11];
+  edge [arrowhead=open, color="#555555", penwidth=1.2];
+
+  "ExtractorControllerImpl" [id="ExtractorControllerImpl", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>ExtractorControllerImpl</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ extractionStarterDocuments()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ convertObjectsToRules()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getRulesMap()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getMaxCategoriesToRun()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getResultForStarter()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getAinCategoriesList()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getMaxNumberOfCategoriesToExtract()</TD></TR>
+    </TABLE>>];
+  "Codelist" [id="Codelist", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>Codelist</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ getCode()</TD></TR>
+    </TABLE>>];
+  "OrquestrationLogServiceImpl" [id="OrquestrationLogServiceImpl", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>OrquestrationLogServiceImpl</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ addNewLog()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ updateLog()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ addNewMessagelog()</TD></TR>
+    </TABLE>>];
+  "ParametersRepository" [id="ParametersRepository", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>ParametersRepository</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ findByCountryAndEnvironmentAndName()</TD></TR>
+    </TABLE>>];
+  "RulesServicesImpl" [id="RulesServicesImpl", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>RulesServicesImpl</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ getRulesReadyToBeExecutedForDocs()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ haveRuleSomeErrorAmsForDocs()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getListOfEntiies()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getAinCategoriesListByAguiCategoryAndCountryAndEntityType()</TD></TR>
+    </TABLE>>];
+  "Additionalbusinesspartner" [id="Additionalbusinesspartner", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>Additionalbusinesspartner</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ setId()</TD></TR>
+    </TABLE>>];
+  "RulesRepository" [id="RulesRepository", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>RulesRepository</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ findRulesReadyToBeExecutedForDocs()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ findRulesReadyToBeExecutedWithCountryForDocs()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ countErrorAmsInRuleForDocs()</TD></TR>
+    </TABLE>>];
+  "AguiColumnsRecordDTO" [id="AguiColumnsRecordDTO", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>AguiColumnsRecordDTO</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ setTipoComp()</TD></TR>
+    </TABLE>>];
+  "ExcelElectricTypeRowMapper" [id="ExcelElectricTypeRowMapper", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>ExcelElectricTypeRowMapper</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ setDistributionCompany()</TD></TR>
+    </TABLE>>];
+  "Description" [id="Description", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>Description</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ setDescription()</TD></TR>
+    </TABLE>>];
+  "CategoriesMappingRepository" [id="CategoriesMappingRepository", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>CategoriesMappingRepository</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ getOnlyAinCategoriesByAguiCategoryAndCountryAndEntityType()</TD></TR>
+    </TABLE>>];
+
+  "ExtractorControllerImpl" -> "Additionalbusinesspartner";
+  "ExtractorControllerImpl" -> "AguiColumnsRecordDTO";
+  "ExtractorControllerImpl" -> "Codelist";
+  "ExtractorControllerImpl" -> "Description";
+  "ExtractorControllerImpl" -> "ExcelElectricTypeRowMapper";
+  "ExtractorControllerImpl" -> "OrquestrationLogServiceImpl";
+  "ExtractorControllerImpl" -> "ParametersRepository";
+  "ExtractorControllerImpl" -> "RulesServicesImpl";
+  "OrquestrationLogServiceImpl" -> "Additionalbusinesspartner";
+  "RulesServicesImpl" -> "CategoriesMappingRepository";
+  "RulesServicesImpl" -> "RulesRepository";
+}

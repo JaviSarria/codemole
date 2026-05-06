@@ -7,13 +7,13 @@ mod parser;
 mod diagram;
 mod output;
 
-/// code-mole — traces an API endpoint through your codebase and generates diagrams.
+/// codemole — traces an API endpoint through your codebase and generates diagrams.
 #[derive(Parser, Debug)]
 #[command(
-    name = "code-mole",
-    version = "0.1.0",
+    name = "codemole",
+    version = "0.1.1",
     about = "Traces an API endpoint through your codebase and generates sequence and class/flow diagrams.",
-    long_about = "code-mole takes a framework language and an endpoint path, finds the handler \
+    long_about = "codemole takes a framework language and an endpoint path, finds the handler \
 in your source code, traverses its call graph, and outputs Mermaid diagrams (.md) \
 plus native SVG files — no external tools required.\n\n\
 Supported languages/frameworks:\n  \
@@ -21,9 +21,9 @@ java    → Spring Boot (@GetMapping, @PostMapping, @RequestMapping, ...)\n  \
 python  → FastAPI (@app.get, @router.post, ...)\n  \
 go      → Gin (r.GET, r.POST, group.DELETE, ...)\n\n\
 Examples:\n  \
-code-mole --lang java   --endpoint /api/users --path ./my-spring-project\n  \
-code-mole --lang python --endpoint /items/{id} --path ./my-fastapi-project\n  \
-code-mole --lang go     --endpoint /health --path ./my-gin-project"
+codemole --lang java   --endpoint /api/users --path ./my-spring-project\n  \
+codemole --lang python --endpoint /items/{id} --path ./my-fastapi-project\n  \
+codemole --lang go     --endpoint /health --path ./my-gin-project"
 )]
 struct Cli {
     /// Language / framework: java | python | go
@@ -48,6 +48,10 @@ struct Cli {
     /// Use any SQLite tool to add/remove symbols without recompiling.
     #[arg(long, default_value_t = default_db_path())]
     db: String,
+
+    /// Path to the java-parser JAR (required for --lang java).
+    #[arg(long, default_value_t = default_jar_path())]
+    java_parser: String,
 }
 
 fn default_output_path() -> String {
@@ -60,6 +64,14 @@ fn default_db_path() -> String {
         .and_then(|p| p.parent().map(|d| d.join("symbols.db")))
         .and_then(|p| p.to_str().map(|s| s.to_owned()))
         .unwrap_or_else(|| "./symbols.db".to_string())
+}
+
+fn default_jar_path() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("java-parser.jar")))
+        .and_then(|p| p.to_str().map(|s| s.to_owned()))
+        .unwrap_or_else(|| "./java-parser.jar".to_string())
 }
 
 fn main() {
@@ -121,9 +133,11 @@ fn main() {
     let out_dir = std::path::Path::new(&cli.output).join(&endpoint_slug);
     let out_dir_str = out_dir.to_string_lossy();
 
-    output::write_diagrams(&cli.lang, &cli.endpoint, &graph, &out_dir_str);
+    output::write_diagrams(&cli.lang, &cli.endpoint, &cli.path, &graph, &out_dir_str, &cli.java_parser);
 
     println!("Output written to '{}':", out_dir.display());
-    println!("  sequence.puml  sequence.svg  sequenceViewer.html");
-    println!("  classflow.dot  classflow.svg classflowViewer.html");
+    println!("  sequence.puml    sequence.svg    sequenceViewer.html");
+    println!("  classflow.dot    classflow.svg   classflowViewer.html");
+    println!("  component.dot    component.svg   componentViewer.html");
+    println!("  dependency.dot   dependency.svg  dependencyViewer.html");
 }
