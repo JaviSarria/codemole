@@ -97,3 +97,69 @@ fn module_name(file: &str, root: &str) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| rel.clone())
 }
+
+// ---------------------------------------------------------------------------
+// Function-mode entry point
+// ---------------------------------------------------------------------------
+
+/// Find a method by name inside a specific class within a Python module.
+///
+/// `modulo` is matched against the file stem (e.g. "users" matches "routers/users.py").
+/// `clase` must be a class defined at module level.
+pub fn find_function(funcion: &str, clase: &str, modulo: &str, root: &str) -> Option<EntryPoint> {
+    let py_files: Vec<String> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "py").unwrap_or(false))
+        .map(|e| e.path().to_string_lossy().to_string())
+        .collect();
+
+    let re_class  = Regex::new(&format!(r"^class\s+{}\s*[:(]", regex::escape(clase))).unwrap();
+    let re_method = Regex::new(&format!(
+        r"^\s+(?:async\s+)?def\s+{}\s*\(",
+        regex::escape(funcion),
+    )).unwrap();
+
+    for file in &py_files {
+        if module_name(file, root) != modulo {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let lines: Vec<&str> = content.lines().collect();
+
+        let mut in_class     = false;
+        let mut class_indent = 0usize;
+
+        for (i, line) in lines.iter().enumerate() {
+            if re_class.is_match(line) {
+                in_class     = true;
+                class_indent = line.len() - line.trim_start().len();
+                continue;
+            }
+            if in_class {
+                // A non-empty line whose indent is ≤ the class definition means we left the class
+                if !line.trim().is_empty() {
+                    let line_indent = line.len() - line.trim_start().len();
+                    if line_indent <= class_indent {
+                        in_class = false;
+                        continue;
+                    }
+                }
+                if re_method.is_match(line) {
+                    return Some(EntryPoint {
+                        file: relative(file, root),
+                        line: i + 1,
+                        class: clase.to_string(),
+                        method: funcion.to_string(),
+                        interface_class: None,
+                    });
+                }
+            }
+        }
+    }
+    None
+}

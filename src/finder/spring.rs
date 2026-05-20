@@ -350,3 +350,72 @@ fn resolve_implementation(
     }
     None
 }
+
+// ---------------------------------------------------------------------------
+// Function-mode entry point
+// ---------------------------------------------------------------------------
+
+/// Find a method by name inside a specific class and Java package.
+///
+/// Searches for a Java file whose `package` declaration matches `paquete`,
+/// locates the class named `clase` inside it, and finds the method `funcion`.
+pub fn find_function(funcion: &str, clase: &str, paquete: &str, root: &str) -> Option<EntryPoint> {
+    let java_files: Vec<String> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "java").unwrap_or(false))
+        .map(|e| e.path().to_string_lossy().to_string())
+        .collect();
+
+    let re_package = Regex::new(r"^\s*package\s+([\w.]+)\s*;").unwrap();
+    let re_method  = Regex::new(
+        r"(?:public|protected|private|default)\s+\S+\s+(\w+)\s*\(",
+    ).unwrap();
+
+    let class_scopes = build_class_scopes(&java_files);
+
+    for file in &java_files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Match package
+        let file_package = lines
+            .iter()
+            .find_map(|l| re_package.captures(l).map(|c| c[1].to_string()))
+            .unwrap_or_default();
+        if file_package != paquete {
+            continue;
+        }
+
+        // Find the class scope
+        let file_scopes = match class_scopes.get(file) {
+            Some(s) => s,
+            None => continue,
+        };
+        let class_scope = match file_scopes.iter().find(|s| s.name == clase) {
+            Some(s) => s,
+            None => continue,
+        };
+
+        // Search for the method within the class scope
+        let start = class_scope.start.saturating_sub(1);
+        let end   = class_scope.end.min(lines.len());
+        for i in start..end {
+            if let Some(cap) = re_method.captures(lines[i]) {
+                if &cap[1] == funcion {
+                    return Some(EntryPoint {
+                        file: relative(file, root),
+                        line: i + 1,
+                        class: clase.to_string(),
+                        method: funcion.to_string(),
+                        interface_class: None,
+                    });
+                }
+            }
+        }
+    }
+    None
+}

@@ -276,3 +276,58 @@ fn package_name(file: &str, root: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "main".to_string())
 }
+
+// ---------------------------------------------------------------------------
+// Function-mode entry point
+// ---------------------------------------------------------------------------
+
+/// Find a function (or method) by name inside a Go module/package directory.
+///
+/// `modulo` is matched against the directory name that contains the Go file
+/// (i.e. the last path segment of the package directory).
+/// Both free functions (`func FuncName(`) and receiver methods
+/// (`func (recv *Type) FuncName(`) are matched.
+pub fn find_function(funcion: &str, modulo: &str, root: &str) -> Option<EntryPoint> {
+    let go_files: Vec<String> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "go").unwrap_or(false))
+        .map(|e| e.path().to_string_lossy().to_string())
+        .collect();
+
+    // Matches both `func FuncName(` and `func (recv *Type) FuncName(`
+    let re_func = Regex::new(&format!(
+        r"^func\s+(?:\([^)]*\)\s+)?{}\s*\(",
+        regex::escape(funcion),
+    )).unwrap();
+    // Extracts the struct/receiver type from `func (recv *Type) …`
+    let re_recv = Regex::new(r"^func\s+\([^)]*\*?(\w+)\s*\)").unwrap();
+
+    for file in &go_files {
+        if package_name(file, root) != modulo {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for (i, line) in content.lines().enumerate() {
+            if re_func.is_match(line) {
+                let class = re_recv
+                    .captures(line)
+                    .map(|c| c[1].to_string())
+                    .unwrap_or_else(|| package_name(file, root));
+                return Some(EntryPoint {
+                    file: relative(file, root),
+                    line: i + 1,
+                    class,
+                    method: funcion.to_string(),
+                    interface_class: None,
+                });
+            }
+        }
+    }
+    None
+}
