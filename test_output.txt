@@ -1,0 +1,39 @@
+﻿cargo :    Compiling zerocopy v0.8.48
+En línea: 1 Carácter: 1
++ cargo test regex_tests --lib -- --nocapture 2>&1 | Out-File -FilePath ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling zerocopy v0.8.48:Str 
+   ing) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   Compiling aho-corasick v1.1.4
+   Compiling regex-syntax v0.8.10
+   Compiling clap_builder v4.6.0
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling walkdir v2.5.0
+   Compiling regex-automata v0.4.14
+   Compiling clap v4.6.0
+   Compiling ahash v0.8.12
+   Compiling regex v1.12.3
+   Compiling hashbrown v0.14.5
+   Compiling hashlink v0.9.1
+   Compiling rusqlite v0.32.1
+   Compiling codemole v0.1.0 (C:\Users\jsarria\workspace\rust\codemole)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.48s
+     Running unittests src\lib.rs 
+(target\debug\deps\codemole-4a7e655bc4cc7872.exe)
+
+running 1 test
+Testing: @PostMapping(value = "TicketCreationXML", consumes = { MediaType.APPLICATION_XML_VALUE,
+  Found: Some("TicketCreationXML"), Expected: Some("TicketCreationXML")
+Testing: @PostMapping("TicketCreationXML")
+  Found: Some("TicketCreationXML"), Expected: Some("TicketCreationXML")
+Testing: @GetMapping("/api/users")
+  Found: Some("/api/users"), Expected: Some("/api/users")
+Testing: @RequestMapping(value = "/items/{id}")
+  Found: Some("/items/{id}"), Expected: Some("/items/{id}")
+test regex_tests::test_multiline_annotation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

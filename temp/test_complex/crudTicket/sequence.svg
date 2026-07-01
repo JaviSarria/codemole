@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="408.6" height="846.5" viewBox="0 0 408.6 846.5">
+  <defs>
+    <style>
+      text { font-family: monospace; font-size: 13px; fill: #222; }
+      .part-box  { fill: #4a90d9; stroke: #2c5f8a; stroke-width:1.5; rx:4; }
+      .part-lab  { fill: white; font-weight: bold; }
+      .life-line { stroke: #999; stroke-width:1; stroke-dasharray:5,4; }
+      .arrow      { stroke: #333; stroke-width:1.5; fill: none; }
+      .arrow-head { fill: #333; }
+      .ret-arrow  { stroke: #666; stroke-width:1.5; fill: none; stroke-dasharray:6,3; }
+      .activation { fill: #c5e3ff; stroke: #4a90d9; stroke-width:1; }
+      .msg-box    { fill: #fffde7; stroke: #e0c800; stroke-width:1; rx:3; }
+      .msg-text   { fill: #333; font-size: 11px; }
+      .ret-text   { fill: #666; font-size: 11px; font-style: italic; }
+      .node-box   { fill: #e8f4fd; stroke: #4a90d9; stroke-width:1.5; rx:6; }
+      .class-box  { fill: #f0f7ff; stroke: #4a90d9; stroke-width:1.5; rx:4; }
+      .class-hdr  { fill: #4a90d9; rx:4; }
+      .class-htxt { fill: white; font-weight: bold; }
+      .edge-line   { stroke: #555; stroke-width:1.5; fill:none; }
+      .edge-lab    { fill: #555; font-size: 11px; }
+      .arrow-group { cursor: crosshair; }
+      .ret-hitpad  { fill: rgba(0,0,0,0); stroke: none; }
+    </style>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" class="arrow-head"/>
+    </marker>
+    <marker id="ret-arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polyline points="0 0, 8 3, 0 6" fill="none" stroke="gray" stroke-width="1.2"/>
+    </marker>
+  </defs>
+  <text x="204.3" y="20.5" text-anchor="middle" style="font-weight:bold;font-size:15px;fill:#333">Sequence Diagram — /crudTicket</text>
+  <line x1="20" y1="30.0" x2="388.6" y2="30.0" stroke="#ddd" stroke-width="1"/>
+  <g transform="translate(0,30.0)">
+  <rect x="22.0" y="10.0" width="168.6" height="44.0" rx="4" class="part-box"/>
+<text x="106.3" y="36.5" text-anchor="middle" class="part-lab">ComplexController</text>
+  <rect x="194.6" y="10.0" width="192.0" height="44.0" rx="4" class="part-box"/>
+<text x="290.6" y="36.5" text-anchor="middle" class="part-lab">ComplexTicketService</text>
+  <line x1="106.3" y1="54.0" x2="106.3" y2="796.5" class="life-line" data-participant="ComplexController"/><rect x="96.3" y="54.0" width="20.0" height="742.5" fill="rgba(0,0,0,0)" stroke="none" pointer-events="all" style="cursor:crosshair" data-participant="ComplexController" class="life-hit"/>
+  <line x1="290.6" y1="54.0" x2="290.6" y2="796.5" class="life-line" data-participant="ComplexTicketService"/><rect x="280.6" y="54.0" width="20.0" height="742.5" fill="rgba(0,0,0,0)" stroke="none" pointer-events="all" style="cursor:crosshair" data-participant="ComplexTicketService" class="life-hit"/>
+  <rect x="284.6" y="109.0" width="12.0" height="605.0" rx="2" class="activation"/>
+  <rect x="100.3" y="54.0" width="12.0" height="742.5" rx="2" class="activation"/>
+  <rect x="288.6" y="164.0" width="12.0" height="55.0" rx="2" class="activation"/>
+  <rect x="288.6" y="274.0" width="12.0" height="55.0" rx="2" class="activation"/>
+  <rect x="288.6" y="384.0" width="12.0" height="55.0" rx="2" class="activation"/>
+  <rect x="288.6" y="494.0" width="12.0" height="55.0" rx="2" class="activation"/>
+  <rect x="288.6" y="604.0" width="12.0" height="55.0" rx="2" class="activation"/>
+  <line x1="112.3" y1="109.0" x2="284.6" y2="109.0" class="arrow" marker-end="url(#arr)" pointer-events="stroke" data-label="crudTicket()" data-kind="call"/><rect x="112.3" y="97.0" width="172.3" height="24" class="ret-hitpad" pointer-events="all" data-label="crudTicket()" data-kind="call"/><rect x="148.7" y="87.0" width="99.6" height="20.0" rx="3" class="msg-box" pointer-events="all" data-label="crudTicket()" data-kind="call"/><text x="198.5" y="103.5" text-anchor="middle" class="msg-text">crudTicket()</text>
+  <path d="M 296.6,164.0 H 340.6 V 196.0 H 300.6" class="arrow" marker-end="url(#arr)"/>
+<rect x="241.5" y="142.0" width="154.2" height="20.0" rx="3" class="msg-box"/>
+<text x="318.6" y="158.5" text-anchor="middle" class="msg-text">getMapTicketToXML()</text>
+  <path d="M 296.6,274.0 H 340.6 V 306.0 H 300.6" class="arrow" marker-end="url(#arr)"/>
+<rect x="261.0" y="252.0" width="115.2" height="20.0" rx="3" class="msg-box"/>
+<text x="318.6" y="268.5" text-anchor="middle" class="msg-text">parseTickets()</text>
+  <path d="M 296.6,384.0 H 340.6 V 416.0 H 300.6" class="arrow" marker-end="url(#arr)"/>
+<rect x="261.0" y="362.0" width="115.2" height="20.0" rx="3" class="msg-box"/>
+<text x="318.6" y="378.5" text-anchor="middle" class="msg-text">insertTicket()</text>
+  <path d="M 296.6,494.0 H 340.6 V 526.0 H 300.6" class="arrow" marker-end="url(#arr)"/>
+<rect x="249.3" y="472.0" width="138.6" height="20.0" rx="3" class="msg-box"/>
+<text x="318.6" y="488.5" text-anchor="middle" class="msg-text">modificarTicket()</text>
+  <path d="M 296.6,604.0 H 340.6 V 636.0 H 300.6" class="arrow" marker-end="url(#arr)"/>
+<rect x="276.6" y="582.0" width="84.0" height="20.0" rx="3" class="msg-box"/>
+<text x="318.6" y="598.5" text-anchor="middle" class="msg-text">logError()</text>
+  <line x1="284.6" y1="714.0" x2="112.3" y2="714.0" class="ret-arrow" marker-end="url(#ret-arr)" pointer-events="stroke" data-label="boolean" data-kind="return"/><text x="198.5" y="710.0" text-anchor="middle" class="ret-text">boolean</text><rect x="112.3" y="702.0" width="172.3" height="24" class="ret-hitpad" pointer-events="all" data-label="boolean" data-kind="return"/>
+  </g>
+</svg>

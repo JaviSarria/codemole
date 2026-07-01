@@ -31,7 +31,7 @@ pub fn find(endpoint: &str, root: &str) -> Option<EntryPoint> {
     // 2.  Scan every file for a matching endpoint annotation
     // ------------------------------------------------------------------
     let re_mapping = Regex::new(
-        r#"@(Get|Post|Put|Delete|Patch|Request)Mapping\s*(?:\([^)]*?"([^"]*)"[^)]*?\)|\(\s*\))?"#,
+        r#"@(Get|Post|Put|Delete|Patch|Request)Mapping\s*(?:\([^)]*?"([^"]*)")?"#,
     )
     .unwrap();
 
@@ -48,8 +48,19 @@ pub fn find(endpoint: &str, root: &str) -> Option<EntryPoint> {
         for (i, line) in lines.iter().enumerate() {
             if let Some(cap) = re_mapping.captures(line) {
                 let raw_path = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                // Normalise and match
-                let full_path = normalise_path(&format!("{}{}", class_prefix, raw_path));
+                
+                // Combine class prefix with method path, ensuring proper "/" separation
+                let combined = if class_prefix.is_empty() {
+                    raw_path.to_string()
+                } else if raw_path.is_empty() {
+                    class_prefix.clone()
+                } else if raw_path.starts_with('/') {
+                    format!("{}{}", class_prefix, raw_path)
+                } else {
+                    format!("{}/{}", class_prefix, raw_path)
+                };
+                
+                let full_path = normalise_path(&combined);
                 if !paths_match(endpoint, &full_path) {
                     continue;
                 }

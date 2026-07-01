@@ -1,0 +1,21 @@
+digraph classflow {
+  graph [rankdir=TB, bgcolor="white", splines=ortho, nodesep=0.8, ranksep=1.4, fontname="Helvetica"];
+  node [shape=none, margin=0, fontname="Helvetica", fontsize=11];
+  edge [arrowhead=open, color="#555555", penwidth=1.2];
+
+  "TestController" [id="TestController", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>TestController</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ create()</TD></TR>
+    </TABLE>>];
+  "TicketCreationService" [id="TicketCreationService", label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="#f0f7ff" STYLE="ROUNDED">
+      <TR><TD BGCOLOR="#4a90d9"><FONT COLOR="white"><B>TicketCreationService</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT">+ crudTicket()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ getMapTicketToXML()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ insertTicket()</TD></TR>
+      <TR><TD ALIGN="LEFT">+ modificarTicket()</TD></TR>
+    </TABLE>>];
+
+  "TestController" -> "TicketCreationService";
+}

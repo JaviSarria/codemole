@@ -96,8 +96,12 @@ pub struct JavaAnalyzer {
 impl JavaAnalyzer {
     pub fn new(skip: HashSet<String>) -> Self {
         Self {
+            // Stricter regex: requires explicit access modifier (public/protected/private)
+            // but flexible on return type to handle generics and complex types.
+            // Prevents matching method calls inside strings like logger.info("crudTicket()...")
+            // because those won't have public/protected/private before them.
             re_def: Regex::new(
-                r"(?:public|protected|private|static|\s)+[\w<>\[\]]+\s+(\w+)\s*\(",
+                r"(?:public|protected|private)\s+(?:static\s+)?(?:final\s+)?(?:synchronized\s+)?(?:abstract\s+)?(?:native\s+)?.*?(\w+)\s*\(",
             ).unwrap(),
             re_call:  Regex::new(r"\b(\w+)\s*\(").unwrap(),
             re_class: Regex::new(r"(?:^|\s)(class|interface|enum)\s+(\w+)").unwrap(),

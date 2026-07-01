@@ -110,6 +110,52 @@ Path parameters are treated as wildcards in endpoint mode — `/items/{id}` matc
 
 Output is written to `<output>/<slug>/` where `slug` is derived from the endpoint or the function label.
 
+---
+
+## Debugging and troubleshooting
+
+### Debug tool for method call analysis
+
+The `debug_calls` tool helps diagnose why certain method calls are not appearing in sequence diagrams or why method definitions are not being detected correctly.
+
+**Building the debug tool:**
+
+```bash
+cargo build --release --example debug_calls
+```
+
+**Usage:**
+
+```bash
+./target/release/examples/debug_calls.exe <java-file> <method-name>
+```
+
+**Example:**
+
+```bash
+./target/release/examples/debug_calls.exe src/main/java/com/example/MyService.java myMethod
+```
+
+**Output:**
+
+The tool displays:
+
+1. **Method source** — Shows the actual method body extracted from the source file
+2. **Java skip symbols** — Lists standard library and framework methods that are automatically filtered during traversal
+3. **Detected calls (BEFORE filtering)** — All method calls found in the method body, categorized as:
+   - Qualified calls (`obj.method()`)
+   - Unqualified calls (`method()`)
+   - Indicates which are kept or skipped
+4. **Final calls (AFTER filtering)** — The actual calls that will appear in the sequence diagram
+
+**Common use cases:**
+
+- **Method not found**: The definition regex may not match methods with complex return types. Check if the method has explicit access modifiers (`public`, `protected`, `private`).
+- **Missing method calls**: Check the "Final Calls" section to see if the call was filtered. If filtered, it's likely in the skip-symbols database (standard library methods like `put`, `get`, `stream`, etc.).
+- **Wrong method body**: If the wrong method is being matched, verify that the definition regex is not matching method calls inside string literals (e.g., inside `logger.info()` calls).
+
+---
+
 ### Function mode — validation rules and behaviour
 
 - If `--funcion` is provided, `--endpoint` must not be present (they are mutually exclusive).

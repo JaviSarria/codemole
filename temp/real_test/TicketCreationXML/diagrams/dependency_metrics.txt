@@ -1,0 +1,20 @@
+=== Dependency Metrics ===
+
+Packages         : 3
+Direct deps      : 1
+Cycles           : 0
+Packages in cycle: 0
+
+--- Most Coupled Packages (fan-in + fan-out, top 10) ---
+  package                                                       fi   fo  total
+  ------------------------------------------------------------  ---  ---  -----
+  com.example.api                                                 0    1      1
+  com.example.service                                             1    0      1
+  com.enel.virtualentity.batch.equipment.extractor.controller     0    0      0
+
+--- Dependency Depth (longest path: 1) ---
+  depth  package
+  -----  ------------------------------------------------------------
+      1  com.example.service
+      0  com.example.api
+      0  com.enel.virtualentity.batch.equipment.extractor.controller

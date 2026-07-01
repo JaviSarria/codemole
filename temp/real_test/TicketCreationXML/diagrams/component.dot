@@ -1,0 +1,16 @@
+digraph components {
+  graph [rankdir=TB, bgcolor="white", fontname="Helvetica",
+         nodesep=0.9, ranksep=1.3, concentrate=true];
+  node  [fontname="Helvetica", fontsize=10, margin=0.18];
+  edge  [style=dashed, arrowhead=open, color="#555555"];
+
+  subgraph cluster_presentation {
+    label=<<B>Presentation</B>>;
+    style=filled; fillcolor="#f0f5ff";
+    color="#4a90d9"; penwidth=2;
+    fontname="Helvetica"; fontsize=12;
+    m_root [label="root\nComplexTicketService\nRealController", shape=component, style=filled,
+       fillcolor="#deeeff", color="#4a90d9"];
+  }
+
+}
