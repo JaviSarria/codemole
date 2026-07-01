@@ -587,7 +587,6 @@ fn extract_body_info(
         let re_qualified = Regex::new(r"\b([a-z]\w*)\.([a-zA-Z]\w*)\s*\(").unwrap();
         let mut calls: Vec<(Option<String>, String)> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
-        let mut qualified_methods: HashSet<String> = HashSet::new();
 
         // Track cumulative parenthesis depth across lines so that calls appearing
         // inside another call's argument list are NOT treated as direct calls.
@@ -601,35 +600,48 @@ fn extract_body_info(
         // Only calls at paren_depth == 0 at the START of their match are direct calls.
         let mut paren_depth: i32 = 0;
 
+        // Single pass: process both qualified and unqualified calls in order of appearance.
+        // This preserves the execution order as they appear in the source code.
         for line in &body_lines {
+            // Collect all matches (qualified and unqualified) with their positions
+            let mut matches: Vec<(usize, bool, String, Option<String>)> = Vec::new();
+
+            // Find qualified calls (obj.method())
             for cap in re_qualified.captures_iter(line) {
                 let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
                 let depth_at_match = paren_depth_at(line, match_start, paren_depth);
                 if depth_at_match == 0 {
                     let qualifier = cap[1].to_string();
-                    let method    = cap[2].to_string();
-                    let key       = format!("{}.{}", qualifier, method);
-                    if seen.insert(key) {
-                        qualified_methods.insert(method.clone());
-                        calls.push((Some(qualifier), method));
-                    }
+                    let method = cap[2].to_string();
+                    matches.push((match_start, true, method, Some(qualifier)));
                 }
             }
-            paren_depth = update_paren_depth(line, paren_depth);
-        }
 
-        paren_depth = 0;
-        for line in &body_lines {
+            // Find unqualified calls (method())
             for cap in lang.call_pattern().captures_iter(line) {
                 let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
                 let depth_at_match = paren_depth_at(line, match_start, paren_depth);
                 if depth_at_match == 0 {
                     let name = cap[1].to_string();
-                    if !qualified_methods.contains(&name) && seen.insert(name.clone()) {
-                        calls.push((None, name));
-                    }
+                    matches.push((match_start, false, name, None));
                 }
             }
+
+            // Sort by position to preserve order of appearance in the line
+            matches.sort_by_key(|m| m.0);
+
+            // Process in order, avoiding duplicates
+            for (_pos, _is_qualified, name, qualifier) in matches {
+                let key = if let Some(ref q) = qualifier {
+                    format!("{}.{}", q, name)
+                } else {
+                    name.clone()
+                };
+                if seen.insert(key) {
+                    calls.push((qualifier, name));
+                }
+            }
+
             paren_depth = update_paren_depth(line, paren_depth);
         }
         calls

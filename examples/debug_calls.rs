@@ -77,9 +77,8 @@ fn main() {
     let re_call = Regex::new(r"\b(\w+)\s*\(").unwrap();
     let re_qualified = Regex::new(r"\b([a-z]\w*)\.([a-zA-Z]\w*)\s*\(").unwrap();
 
-    let mut all_calls = std::collections::HashSet::new();
-    let mut qualified_calls = Vec::new();
-    let mut unqualified_calls = Vec::new();
+    let mut all_calls: Vec<String> = Vec::new();
+    let mut seen_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for line in &body_lines {
         // Skip comments
@@ -89,37 +88,40 @@ fn main() {
             line
         };
 
+        // Collect all matches (qualified and unqualified) with their positions in this line
+        let mut matches: Vec<(usize, String)> = Vec::new();
+
         // Extract qualified calls (obj.method())
         for cap in re_qualified.captures_iter(line) {
-            let method = &cap[2];
-            all_calls.insert(method.to_string());
-            qualified_calls.push(method.to_string());
+            let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
+            let method = cap[2].to_string();
+            matches.push((match_start, method));
         }
 
         // Extract unqualified calls (method())
         for cap in re_call.captures_iter(line) {
+            let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
             let method = &cap[1];
             if !["if", "for", "while", "switch", "catch", "synchronized", "try"].contains(&method) {
-                all_calls.insert(method.to_string());
-                unqualified_calls.push(method.to_string());
+                matches.push((match_start, method.to_string()));
+            }
+        }
+
+        // Sort by position in line to preserve order of appearance
+        matches.sort_by_key(|m| m.0);
+
+        // Add to all_calls in order, avoiding duplicates
+        for (_pos, method) in matches {
+            if seen_calls.insert(method.clone()) {
+                all_calls.push(method);
             }
         }
     }
 
     let skip_symbols = get_java_skip_symbols();
     
-    println!("\nQualified calls (obj.method()):");
-    for call in &qualified_calls {
-        let status = if skip_symbols.contains(call.as_str()) { 
-            "  [SKIPPED]" 
-        } else { 
-            "  [KEPT]" 
-        };
-        println!("{} {}", status, call);
-    }
-    
-    println!("\nUnqualified calls (method()):");
-    for call in &unqualified_calls {
+    println!("\n--- Detected Calls (in order of appearance) ---");
+    for call in &all_calls {
         let status = if skip_symbols.contains(call.as_str()) { 
             "  [SKIPPED]" 
         } else { 
