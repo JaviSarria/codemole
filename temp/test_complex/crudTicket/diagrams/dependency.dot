@@ -1,0 +1,25 @@
+digraph dependencies {
+  graph [layout=fdp, bgcolor="white", fontname="Helvetica",
+         nodesep=0.7, splines=curved, overlap=false];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+
+  subgraph cluster_presentation {
+    label=<<B>Presentation</B>>;
+    style=filled; fillcolor="#f0f5ff";
+    color="#4a90d9"; penwidth=2;
+    fontname="Helvetica"; fontsize=11;
+    d_com_example_api [penwidth=3.5, label="example.api\nfi:0 fo:1  d:0", fillcolor="#deeeff", color="#4a90d9", tooltip="fan-in:0 fan-out:1 depth:0"];
+    d_com_enel_virtualentity_batch_equipment_extractor_controller [label="extractor.controller\nfi:0 fo:0  d:0", fillcolor="#deeeff", color="#4a90d9", tooltip="fan-in:0 fan-out:0 depth:0"];
+  }
+
+  subgraph cluster_business {
+    label=<<B>Business</B>>;
+    style=filled; fillcolor="#f0fff5";
+    color="#3a9a50"; penwidth=2;
+    fontname="Helvetica"; fontsize=11;
+    d_com_example_service [penwidth=3.5, label="example.service\nfi:1 fo:0  d:1", fillcolor="#d8f8e4", color="#3a9a50", tooltip="fan-in:1 fan-out:0 depth:1"];
+  }
+
+  d_com_example_api -> d_com_example_service [style=dashed, color="#555555"];
+}

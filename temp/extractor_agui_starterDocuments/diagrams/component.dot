@@ -1,0 +1,57 @@
+digraph components {
+  graph [rankdir=TB, bgcolor="white", fontname="Helvetica",
+         nodesep=0.9, ranksep=1.3, concentrate=true];
+  node  [fontname="Helvetica", fontsize=10, margin=0.18];
+  edge  [style=dashed, arrowhead=open, color="#555555"];
+
+  subgraph cluster_presentation {
+    label=<<B>Presentation</B>>;
+    style=filled; fillcolor="#f0f5ff";
+    color="#4a90d9"; penwidth=2;
+    fontname="Helvetica"; fontsize=12;
+    m_com_enel_virtualentity_batch_equipment_extractor_controller [label="controller\nExtractorControllerImpl", shape=component, style=filled,
+       fillcolor="#deeeff", color="#4a90d9"];
+  }
+
+  subgraph cluster_business {
+    label=<<B>Business</B>>;
+    style=filled; fillcolor="#f0fff5";
+    color="#3a9a50"; penwidth=2;
+    fontname="Helvetica"; fontsize=12;
+    m_com_enel_virtualentity_batch_equipment_extractor_entity_old [label="old\nAdditionalbusinesspartner\nCodelist", shape=component, style=filled,
+       fillcolor="#d8f8e4", color="#3a9a50"];
+    m_com_enel_virtualentity_service [label="service\nOrquestrationLogServiceImpl\nRulesServicesImpl", shape=component, style=filled,
+       fillcolor="#d8f8e4", color="#3a9a50"];
+  }
+
+  subgraph cluster_data {
+    label=<<B>Data</B>>;
+    style=filled; fillcolor="#fff8f0";
+    color="#d07820"; penwidth=2;
+    fontname="Helvetica"; fontsize=12;
+    m_com_enel_virtualentity_batch_equipment_extractor_repository [label="repository\nCategoriesMappingRepository\nParametersRepository\nRulesRepository", shape=component, style=filled,
+       fillcolor="#ffeedd", color="#d07820"];
+    m_com_enel_virtualentity_utils_mapper [label="mapper\nExcelElectricTypeRowMapper", shape=component, style=filled,
+       fillcolor="#ffeedd", color="#d07820"];
+  }
+
+  subgraph cluster_other {
+    label=<<B>Other</B>>;
+    style=filled; fillcolor="#fdfdfd";
+    color="#aaaaaa"; penwidth=2;
+    fontname="Helvetica"; fontsize=12;
+    m_com_enel_virtualentity_batch_equipment_agui_entity [label="entity\nAguiColumnsRecordDTO", shape=component, style=filled,
+       fillcolor="#f5f5f5", color="#aaaaaa"];
+    m_com_enel_virtualentity_dto [label="dto\nDescription", shape=component, style=filled,
+       fillcolor="#f5f5f5", color="#aaaaaa"];
+  }
+
+  m_com_enel_virtualentity_batch_equipment_extractor_controller -> m_com_enel_virtualentity_batch_equipment_agui_entity;
+  m_com_enel_virtualentity_batch_equipment_extractor_controller -> m_com_enel_virtualentity_batch_equipment_extractor_entity_old;
+  m_com_enel_virtualentity_batch_equipment_extractor_controller -> m_com_enel_virtualentity_batch_equipment_extractor_repository [style=solid, color="#cc2222", penwidth=2.5, label="⚠ violation", fontcolor="#cc2222"];
+  m_com_enel_virtualentity_batch_equipment_extractor_controller -> m_com_enel_virtualentity_dto;
+  m_com_enel_virtualentity_batch_equipment_extractor_controller -> m_com_enel_virtualentity_service;
+  m_com_enel_virtualentity_batch_equipment_extractor_controller -> m_com_enel_virtualentity_utils_mapper [style=solid, color="#cc2222", penwidth=2.5, label="⚠ violation", fontcolor="#cc2222"];
+  m_com_enel_virtualentity_service -> m_com_enel_virtualentity_batch_equipment_extractor_entity_old;
+  m_com_enel_virtualentity_service -> m_com_enel_virtualentity_batch_equipment_extractor_repository;
+}

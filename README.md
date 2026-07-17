@@ -1,23 +1,26 @@
 # codemole
 
-**codemole** is a CLI tool that traces an API endpoint through your source code and generates sequence and class/flow diagrams.
+**codemole** is a CLI and desktop tool that traces an API endpoint or a function/method through your source code and generates sequence and class/flow diagrams.
 
 ---
 
 ## How it works
 
-1. **Find** — Locates the endpoint handler in the codebase using framework-specific patterns (Spring annotations, FastAPI decorators, Gin route registrations).
-2. **Traverse** — Performs a BFS walk of the call graph starting from that handler, following only calls that exist in *your* codebase. Symbols to skip (stdlib, framework helpers) are loaded from an SQLite database — extensible without recompiling.
-3. **Generate** — Produces a PlantUML sequence diagram (`.puml`) and a Graphviz class/flow diagram (`.dot`).
-4. **Render** — Calls `plantuml` and `dot` when available; falls back to a pure-Rust SVG renderer otherwise. Also writes self-contained HTML viewers with pan/zoom support.
+1. **Find** — Locates the entry point in the codebase. codemole supports two modes:
+   - Endpoint mode: locate an HTTP handler using framework-specific patterns (Spring annotations, FastAPI decorators, Gin route registrations).
+   - Function mode: locate a function or method by name inside a given class/package/module (see "Function mode" below).
+2. **Parse** — For Java projects, launches an external Java parser (`java -jar java-parser.jar <source-root>`) as a subprocess. The parser performs AST analysis and writes a structured JSON document to stdout. codemole reads and deserializes this JSON into a unified Intermediate Representation (IR).
+3. **Traverse** — Builds a call graph from the IR and performs a BFS walk starting from the matched handler/function, skipping symbols loaded from an SQLite database (stdlib, framework helpers).
+4. **Generate** — Produces a Mermaid sequence diagram source and Graphviz DOT sources for class/flow/component/dependency diagrams.
+5. **Render** — Uses the built-in pure-Rust SVG renderer for sequence diagrams; calls `dot` (Graphviz) for class/flow diagrams when available, falling back to the built-in renderer otherwise. Also writes self-contained HTML viewers with pan/zoom support.
 
-For Java projects that use interfaces (Spring `@Controller` + implementation class, OpenAPI-generated stubs, Feign clients, etc.), codemole detects that the matched class is an interface, finds the concrete implementation, and builds the call graph from the real business logic.
+For Java projects that use interfaces (Spring `@Controller` + implementation class, OpenAPI-generated stubs, Feign clients, etc.), codemole detects that the matched class is an interface, finds the concrete implementation, and builds the call graph from the real business logic. The same resolution is attempted when a function inside an interface is targeted.
 
 ---
 
 ## Supported languages and frameworks
 
-| Language | Framework | Patterns recognised |
+| Language | Framework | Patterns recognized |
 |----------|-----------|---------------------|
 | `java`   | Spring Boot | `@GetMapping`, `@PostMapping`, `@PutMapping`, `@DeleteMapping`, `@PatchMapping`, class-level `@RequestMapping` prefix |
 | `python` | FastAPI     | `@app.get/post/put/delete/patch(...)`, `@router.*(...)` |
@@ -25,205 +28,329 @@ For Java projects that use interfaces (Spring `@Controller` + implementation cla
 
 ---
 
+## Prerequisites
+
+| Dependency | Required for | Minimum version |
+|------------|-------------|-----------------|
+| [Rust](https://rustup.rs/) + Cargo | Building codemole | 1.81 |
+| [Java JDK](https://adoptium.net/) | Analyzing Java projects (`--lang java`) | 17 |
+| [Maven](https://maven.apache.org/) | Building the Java parser jar (one-time) | 3.6 |
+| [Graphviz](https://graphviz.org/) | Class/flow diagram SVG (optional) | any recent |
+
+Java and Maven are only needed if you intend to analyze Java source code. Graphviz is optional (a built-in Rust renderer is used as fallback).
+
+---
+
 ## Installation
 
-### From source (requires Rust ≥ 1.81)
+See the `scripts/` folder for convenience installers. Typical steps:
 
-```bash
-git clone https://github.com/javisarria/codemole
-cd codemole
-cargo build --release
-# binary is at ./target/release/codemole
-```
-
-To install globally:
-
-```bash
-cargo install --path .
-```
-
-### Optional external renderers
-
-| Tool | Used for | Install |
-|------|----------|---------|
-| [PlantUML](https://plantuml.com/) | Sequence diagram SVG | `brew install plantuml` / `choco install plantuml` |
-| [Graphviz](https://graphviz.org/) | Class/flow diagram SVG | `brew install graphviz` / `choco install graphviz` |
-
-Both are optional. If absent, the built-in Rust renderer is used instead.
+1. Clone repository.
+2. (Optional) Build Java parser: `cd parsers/java && mvn package -DskipTests` to produce the fat JAR.
+3. Build the CLI and desktop binaries: `cargo build --release --bins`.
+4. Optional: build the debug helper example: `cargo build --release --example debug_calls`.
 
 ---
 
 ## Usage
 
+codemole now supports two entry points:
+
+- CLI mode: pass arguments to `codemole`
+- Desktop frontend: run `codemole` without arguments, or launch `codemole-desktop` directly
+
+### CLI mode
+
+```text
+codemole --lang <LANG> [--endpoint <PATH> | --funcion <NAME>]
+         [--path <DIR>] [--output <DIR>] [--db <FILE>]
+         [--java-parser <JAR>] [--clase <NAME>] [--paquete <NAME>] [--modulo <NAME>]
 ```
-codemole --lang <LANG> --endpoint <PATH> [--path <DIR>] [--output <DIR>] [--db <FILE>]
+
+The CLI requires exactly one tracing mode:
+
+- `--endpoint` to trace an HTTP handler
+- `--funcion` to trace a specific function or method
+
+If you run from Cargo in development, pass CLI arguments after `--`:
+
+```bash
+cargo run --bin codemole -- --lang java --endpoint /api/users --path ./my-spring-project
 ```
+
+### Desktop frontend
+
+When `codemole` is executed without arguments, it tries to launch the companion desktop binary `codemole-desktop` from the same directory.
+
+```bash
+# Build both binaries
+cargo build --release --bins
+
+# Launch the desktop frontend directly in development
+cargo run --bin codemole-desktop
+
+# Launch the desktop frontend from the built binary pair
+./target/release/codemole
+```
+
+Inside the desktop app you can:
+
+- Select language: `java`, `python`, `go`
+- Select tracing mode: endpoint or function
+- Apply one of the built-in templates. These labels appear exactly as shown in the UI:
+  - `Spring - Endpoint`
+  - `Spring - Funcion`
+  - `FastAPI - Endpoint`
+  - `FastAPI - Funcion`
+  - `Gin - Endpoint`
+  - `Gin - Funcion`
+- Fill the mode-specific fields:
+  - Java function mode: `--clase` and `--paquete`
+  - Python function mode: `--clase` and `--modulo`
+  - Go function mode: `--modulo`
+- Configure optional paths for `--output`, `--db`, and `--java-parser`
+- Run codemole and inspect stdout/stderr in the integrated log panel
+
+If you pass arguments to `codemole`, it stays in CLI mode and does not open the desktop frontend.
 
 ### Options
 
-| Flag | Description | Default |
-|------|-------------|---------|
+| Flag | Description | Notes |
+|------|-------------|-------|
 | `--lang` | Language/framework: `java` \| `python` \| `go` | required |
-| `--endpoint` | API endpoint to trace, e.g. `/api/users` | required |
-| `--path` | Root directory of the source code to analyse | `.` (current dir) |
-| `--output` | Base output directory; a sub-folder named after the endpoint is created inside | OS temp dir |
+| `--endpoint` | API endpoint to trace, e.g. `/api/users` | Mutually exclusive with `--funcion`. Use for endpoint-mode tracing |
+| `--funcion` | Function or method name to trace | Mutually exclusive with `--endpoint`. Use for function-mode tracing |
+| `--clase` | Class name (used with `--funcion` for Java and Python) | Required for Java and Python when using `--funcion` |
+| `--paquete` | Package name (used with `--funcion` for Java) | Required for Java when using `--funcion` |
+| `--modulo` | Module name (used with `--funcion` for Python and Go) | Required for Python and Go when using `--funcion` |
+| `--path` | Root directory of the source code to analyze | `.` (current dir) |
+| `--output` | Base output directory; a sub-folder named after the endpoint or function is created inside | OS temp dir |
 | `--db` | Path to the skip-symbols SQLite database (created on first run) | `<exe-dir>/symbols.db` |
-| `--help` | Print help | |
-| `--version` | Print version | |
+| `--java-parser` | Path to `java-parser.jar` (used for CFG-enriched Java sequence diagrams) | `./parsers/java/target/java-parser.jar` |
 
 ### Examples
 
-```bash
-# Java / Spring Boot
-codemole --lang java --endpoint /api/users --path ./my-spring-project --output ./diagrams
+Endpoint mode:
 
-# Python / FastAPI
+```bash
+# Java / Spring Boot (endpoint mode)
+codemole --lang java \
+         --endpoint /api/users \
+         --path ./my-spring-project \
+         --java-parser ./parsers/java/target/java-parser.jar \
+         --output ./diagrams
+
+# Python / FastAPI (endpoint mode)
 codemole --lang python --endpoint /items/{id} --path ./my-fastapi-project --output ./diagrams
 
-# Go / Gin
+# Go / Gin (endpoint mode)
 codemole --lang go --endpoint /health --path ./my-gin-project --output ./diagrams
 ```
 
-Path parameters are treated as wildcards — `/items/{id}` matches `/items/{item_id}` in FastAPI or `/items/:id` in Gin.
+Function mode (finds a specific function/method instead of an HTTP handler):
 
-Output is written to `<output>/<endpoint-slug>/`. For example, `/api/users/{id}` → `./diagrams/api_users_id/`.
+```bash
+# Java: require --clase and --paquete
+codemole --lang java --funcion getUserById --clase UserController --paquete com.example.users --path ./my-spring-project
+
+# Python: require --clase and --modulo
+codemole --lang python --funcion get_item --clase ItemService --modulo services.items --path ./my-fastapi-project
+
+# Go: require --modulo (module/directory name)
+codemole --lang go --funcion GetHealth --modulo handlers --path ./my-gin-project
+```
+
+Path parameters are treated as wildcards in endpoint mode — `/items/{id}` matches `/items/{item_id}` in FastAPI or `/items/:id` in Gin.
+
+Output is written to `<output>/<slug>/` where `slug` is derived from the endpoint or the function label.
+
+---
+
+## Debugging and troubleshooting
+
+### Debug tool for method call analysis
+
+The `debug_calls` example helps diagnose why a method call is missing from the generated sequence diagram, why a method definition is not being detected, or why call order looks wrong.
+
+Build it once:
+
+```bash
+cargo build --release --example debug_calls
+```
+
+Run it against a Java source file and method name:
+
+```bash
+./target/release/examples/debug_calls.exe <java-file> <method-name>
+```
+
+Example:
+
+```bash
+./target/release/examples/debug_calls.exe src/main/java/com/example/MyService.java crudTicket
+```
+
+On Windows you can also use the helper script:
+
+```powershell
+.\debug.ps1 -JavaFile "C:\path\to\TicketCreationService.java" -MethodName crudTicket
+```
+
+### What the debug tool shows
+
+The output is split into three main sections:
+
+1. **Method Source**
+  Confirms the exact method body that codemole matched. This is the first thing to verify when the wrong method seems to be analyzed.
+2. **Detected Calls**
+  Shows the calls found in source order and whether each one is kept or skipped.
+  - `[KEPT]`: eligible for traversal and diagram generation
+  - `[SKIPPED]`: filtered out by the skip-symbol database or keyword rules
+3. **Final Calls (AFTER filtering)**
+  Shows the calls that should actually appear in the diagram.
+
+Expected output for a method like `crudTicket()` usually looks like this:
+
+```text
+--- Final Calls (AFTER filtering) ---
+Kept for traversal:
+  ✓ getMapTicketToXML
+  ✓ insertTicket
+  ✓ modificarTicket
+```
+
+### Typical interpretation
+
+If a method appears in **Final Calls**, codemole has detected it and will attempt to resolve it in the definition index.
+
+If a method appears in **Filtered out**, that is often normal for standard library or framework helpers such as `put`, `get`, `stream`, `collect`, or `filter`.
+
+If the tool reports no useful calls, check whether the method body contains only skipped helpers, comments, or patterns that are not real direct calls.
+
+### Common problems
+
+**Method not found**
+
+Possible causes:
+
+- The definition regex does not match the signature
+- The method is in a different file than expected
+- The method name appears in a log string or comment and the wrong location is being matched
+
+Checks:
+
+- Verify the method has an explicit access modifier such as `public`, `protected`, or `private`
+- Confirm the reported **Method Source** block is the real implementation
+- Re-run the tool against the concrete implementation class if an interface is involved
+
+**Calls missing from Final Calls**
+
+Possible causes:
+
+- The call was filtered by skip-symbols
+- The call is nested inside arguments and is not treated as a direct top-level call
+- The syntax does not match the current extraction patterns
+
+Checks:
+
+- Look for the call in **Detected Calls**
+- If it is marked `[SKIPPED]`, inspect the skip-symbol database
+- If it does not appear at all, verify the source line is a direct call in the matched method body
+
+**Calls detected but still absent from the diagram**
+
+This usually means detection worked but resolution failed later.
+
+Possible causes:
+
+- The target definition is outside the scanned source root
+- The method exists in another package/module that was not indexed
+- The method is defined in an interface or parent type and resolution picked the wrong symbol
+
+Checks:
+
+- Run codemole normally and inspect the `Call graph: X nodes, Y edges` line
+- If `Y` is unexpectedly low, definitions are not being resolved after detection
+- Verify the project root passed via `--path` includes every relevant source file
+
+### Database management
+
+codemole stores skip-symbols in SQLite so you can tweak traversal behavior without recompiling.
+
+```powershell
+# Open the database with your preferred SQLite client
+sqlite3 ".\target\release\symbols.db"
+
+# Show Java skip-symbols
+SELECT symbol FROM skip_symbols
+WHERE language_id = (SELECT id FROM languages WHERE name = 'java')
+ORDER BY symbol;
+
+# Remove a symbol so it can appear in diagrams
+DELETE FROM skip_symbols
+WHERE language_id = (SELECT id FROM languages WHERE name = 'java')
+AND symbol = 'collect';
+```
+
+### Information to collect when debugging
+
+If you still need help, capture these three artifacts:
+
+```powershell
+# 1. Raw debug output for the method
+.\target\release\examples\debug_calls.exe "path\to\TicketCreationService.java" crudTicket
+
+# 2. Normal codemole execution to inspect graph size
+.\target\release\codemole.exe --lang java --endpoint TicketCreationXML --path "C:\path\to\project"
+
+# 3. Generated sequence source
+Get-Content "output\TicketCreationXML\diagrams\sequence.md"
+```
+
+Those three outputs are usually enough to distinguish between detection issues, skip-symbol filtering, and definition-resolution failures.
+
+---
+
+### Function mode — validation rules and behavior
+
+- If `--funcion` is provided, `--endpoint` must not be present (they are mutually exclusive).
+- Java:
+  - When `--endpoint` is used, `--funcion`, `--clase` and `--paquete` must not be provided.
+  - When `--funcion` is used, `--clase` and `--paquete` are required and `--modulo` is invalid.
+  - `find_function` locates a Java file whose `package` declaration matches `--paquete`, finds the `class` named by `--clase`, and returns the requested method definition.
+- Python:
+  - When `--endpoint` is used, `--funcion`, `--clase` and `--modulo` must not be provided.
+  - When `--funcion` is used, both `--clase` and `--modulo` are required.
+  - `find_function` locates the module by file stem matching `--modulo`, finds the class definition named by `--clase` (top-level class) and the `def` inside it.
+- Go:
+  - When `--endpoint` is used, `--funcion` and `--modulo` must not be combined with endpoint route parameters (finder enforces separation).
+  - When `--funcion` is used, `--modulo` is required and `--clase`/`--paquete` are invalid.
+  - `find_function` searches Go files inside the directory matching `--modulo` and matches either free functions (`func Name(`) or receiver methods (`func (r *Type) Name(`).
+
+Everything else in the processing pipeline (call graph construction, BFS traversal, diagram generation and rendering) remains unchanged.
 
 ---
 
 ## Output files
 
-Each run writes the following files inside the endpoint sub-folder:
+Each run writes the following files inside the output sub-folder (diagram sources are stored in a `diagrams/` subfolder):
 
 | File | Contents |
 |------|----------|
-| `sequence.puml` | PlantUML `@startuml` sequence diagram source |
-| `classflow.dot` | Graphviz DOT digraph — class diagram (Java) or call-flow (Python/Go) |
-| `sequence.svg` | Rendered SVG — sequence diagram |
-| `classflow.svg` | Rendered SVG — class diagram or call-flow |
+| `diagrams/sequence.md` | Mermaid `sequenceDiagram` source |
+| `diagrams/classflow.dot` | Graphviz DOT digraph — class diagram (Java) or call-flow (Python/Go) |
+| `diagrams/component.dot` | Graphviz DOT digraph — component/module diagram |
+| `diagrams/dependency.dot` | Graphviz DOT digraph — package dependency diagram |
+| `diagrams/dependency_metrics.txt` | Dependency coupling/cohesion metrics |
+| `sequence.svg` | Rendered SVG — sequence diagram (built-in renderer) |
+| `classflow.svg` | Rendered SVG — class diagram or call-flow (`dot` if available, else built-in) |
+| `component.svg` | Rendered SVG — component diagram |
+| `dependency.svg` | Rendered SVG — dependency diagram |
 | `sequenceViewer.html` | Self-contained HTML viewer with embedded SVG and pan/zoom |
 | `classflowViewer.html` | Self-contained HTML viewer with embedded SVG and pan/zoom |
-
-### Sample output — PlantUML sequence diagram
-
-```plantuml
-@startuml
-participant "ItemController" as p0
-participant "ItemService"    as p1
-participant "ItemRepository" as p2
-
-activate p0
-p0 -> p1 : fetchItems()
-activate p1
-p1 -> p2 : buildQuery()
-activate p2
-p2 --> p1 : List<Item>
-deactivate p2
-p1 --> p0 : List<Item>
-deactivate p1
-deactivate p0
-@enduml
-```
-
-### Sample output — Graphviz DOT (Java class diagram)
-
-```dot
-digraph classflow {
-  graph [rankdir=TB, bgcolor="white", splines=ortho];
-  node [shape=none, margin=0];
-
-  ItemController [label=<
-    <TABLE ...>
-      <TR><TD><B>ItemController</B></TD></TR>
-      <TR><TD ALIGN="LEFT">+ fetchItems()</TD></TR>
-    </TABLE>>];
-  ItemService [label=<...>];
-  ItemController -> ItemService [label="uses"];
-}
-```
-
-### Sample output — Graphviz DOT (Python/Go call-flow)
-
-```dot
-digraph classflow {
-  graph [rankdir=TB];
-  N0 [label="main.get_items"];
-  N1 [label="service.fetch_items"];
-  N2 [label="db.build_query"];
-  N0 -> N1 [label="fetch_items"];
-  N1 -> N2 [label="build_query"];
-}
-```
-
----
-
-## Skip-symbols database
-
-codemole uses an SQLite database (`symbols.db`) to decide which function calls to skip during BFS traversal. The database is created automatically on the first run and seeded with built-in defaults for each language (stdlib calls, common framework helpers, logging utilities, etc.).
-
-**You can extend or trim the list without recompiling** — use any SQLite client:
-
-```bash
-# Add a symbol to skip for Java
-sqlite3 symbols.db \
-  "INSERT INTO skip_symbols (language_id, category_id, symbol)
-   SELECT l.id, c.id, 'myHelperMethod'
-   FROM languages l, skip_categories c
-   WHERE l.name='java' AND c.name='custom';"
-
-# List all Java skip-symbols
-sqlite3 symbols.db \
-  "SELECT s.symbol FROM skip_symbols s
-   JOIN languages l ON l.id = s.language_id
-   WHERE l.name = 'java';"
-```
-
-### Schema
-
-```
-languages        id, name                         ("java", "python", "go")
-skip_categories  id, name                         ("stdlib", "keywords", …)
-skip_symbols     id, language_id, category_id, symbol
-```
-
----
-
-## SVG generation
-
-SVG files are rendered using the best available tool:
-
-1. `plantuml` (sequence) / `dot` (class/flow) — preferred when installed.
-2. Built-in pure-Rust renderer — used as a fallback with no external dependencies.
-
-The built-in renderer features:
-- Dynamic per-participant column widths (labels never overlap)
-- BFS-level layout for flowcharts
-- Grid layout for class diagrams
-- Self-call loops rendered as rectangular arcs
-
----
-
-## How it works internally
-
-### Finder (`src/finder/`)
-
-Language-specific modules scan source files with regex patterns to locate the endpoint annotation/route registration. For Java, class-level `@RequestMapping` prefixes are accumulated and combined with method-level mappings. When a matched class turns out to be an `interface`, the finder scans all other `.java` files for a `class X implements InterfaceName` declaration and resolves to the concrete implementation.
-
-### Skip-symbols DB (`src/db/`)
-
-On startup, `db::init` opens (or creates) `symbols.db`, ensures the schema exists, and seeds language-specific skip-symbol defaults on the first run. `db::load_skip_symbols` returns a `HashSet<String>` consumed by the BFS traversal.
-
-### Call graph (`src/parser/`)
-
-A definition index is built by scanning every source file for function/method declarations. From the entry point, BFS traversal extracts call sites from method bodies and resolves each callee name against the index, skipping any name present in the skip-symbols set.
-
-### Diagrams (`src/diagram/`)
-
-- `sequence.rs` — emits a PlantUML `@startuml` block with DFS-ordered participants, activation bars, and return arrows labelled by the callee's declared return type or expression.
-- `classflow.rs` — emits a Graphviz DOT digraph: HTML-table record nodes grouped by class (Java) or simple labelled nodes with directed edges (Python/Go).
-
-### Output & SVG renderer (`src/output/`)
-
-`output::write_diagrams` writes `.puml` and `.dot` sources, then tries `plantuml`/`dot` to render SVGs. On failure it calls the built-in Rust renderers in `svg.rs`. Finally, it generates `sequenceViewer.html` and `classflowViewer.html` by embedding the SVG into a viewer template with `svg-pan-zoom`.
+| `componentViewer.html` | Self-contained HTML viewer with embedded SVG and pan/zoom |
+| `dependencyViewer.html` | Self-contained HTML viewer with embedded SVG and pan/zoom |
+| `svg-pan-zoom.min.js` | Pan/zoom library used by the viewers |
 
 ---
 
@@ -235,24 +362,45 @@ codemole/
 ├── viewer/
 │   ├── viewer.html              # HTML viewer template (embedded at compile time)
 │   └── svg-pan-zoom.min.js      # Pan/zoom library (embedded at compile time)
+├── parsers/
+│   └── java/
+│       ├── pom.xml              # Maven fat-jar project (JavaParser + Gson)
+│       └── src/main/java/com/codemole/
+│           ├── JavaASTParser.java   # Entry point — two-pass orchestrator
+│           ├── ProgramBuilder.java  # Stateful IR accumulator (Program v1.0)
+│           ├── SpringDetector.java  # Spring MVC annotation detection
+│           └── cfg/
+│               └── CfgBuilder.java  # Per-method CFG construction
+├── scripts/
+│   ├── install.sh / install.ps1         # Dependencies only (Graphviz, Java, Maven, jar)
+│   └── install-all.sh / install-all.ps1 # Full install (above + Rust + codemole binary)
 ├── src/
-│   ├── main.rs                  # CLI entry (clap)
+│   ├── main.rs                  # CLI entry; launches desktop frontend when run without args
+│   ├── bin/
+│   │   └── desktop.rs           # Native desktop frontend built with eframe/egui
+│   ├── ir/
+│   │   └── mod.rs               # Unified IR — Program (JSON contract) + Graph (runtime)
 │   ├── db/
 │   │   └── mod.rs               # SQLite skip-symbols DB
 │   ├── finder/
-│   │   ├── mod.rs               # EntryPoint type + factory
-│   │   ├── spring.rs            # Java/Spring finder
-│   │   ├── fastapi.rs           # Python/FastAPI finder
-│   │   └── gin.rs               # Go/Gin finder
+│   │   ├── mod.rs               # EntryPoint type + factory + find_function dispatcher
+│   │   ├── spring.rs            # Java/Spring finder (+ find_function)
+│   │   ├── fastapi.rs           # Python/FastAPI finder (+ find_function)
+│   │   └── gin.rs               # Go/Gin finder (+ find_function)
 │   ├── parser/
-│   │   └── mod.rs               # BFS call-graph traversal
+│   │   ├── mod.rs               # Parser module exports
+│   │   ├── java_ir.rs           # Thin bridge: launch jar → deserialize JSON → Graph
+│   │   └── language.rs          # LanguageAnalyzer trait + Python/Go impls
 │   ├── diagram/
 │   │   ├── mod.rs
-│   │   ├── sequence.rs          # PlantUML sequence diagram
+│   │   ├── sequence.rs          # Mermaid sequence diagram source builder
 │   │   └── classflow.rs         # Graphviz DOT class diagram / call-flow
 │   └── output/
 │       ├── mod.rs               # File writer + external renderer calls
 │       └── svg.rs               # Native fallback SVG renderer
+├── debug.ps1                    # PowerShell helper for debug_calls
+├── examples/
+│   └── debug_calls.rs           # Debug helper to inspect detected calls for a Java method
 └── README.md
 ```
 
@@ -262,6 +410,6 @@ codemole/
 
 - Regex-based parsing — does not handle heavily minified, generated, or macro-expanded code.
 - Indirect calls (reflection, dynamic dispatch beyond interface resolution) are not traced.
-- Multi-module Maven/Gradle projects: implementations in a different module/jar than the interface will fall back to the interface location.
-- Python: only top-level `def`/`async def` functions are traced (class methods inside classes are matched by method name only).
-- Go: only functions with a single return path are reliably traced; complex closures may be missed.
+- Multi-module Maven/Gradle projects: implementations in a different module/jar than the interface may fall back to the interface location.
+- Python: only top-level `def`/`async def` functions and class methods defined in top-level classes are traced by function-mode heuristics.
+- Go: most free functions and simple receiver methods are matched; complex build systems or generated code may not be discovered by the simple directory-based module match.

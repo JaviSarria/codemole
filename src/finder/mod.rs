@@ -27,3 +27,24 @@ pub fn find_endpoint(lang: &str, endpoint: &str, root_path: &str) -> Option<Entr
         _ => None,
     }
 }
+
+/// Find a function/method by name in the given class and scope (package/module).
+///
+/// - `funcion`: function or method name to search for
+/// - `clase`: class name (required for java and python; `None` for go)
+/// - `scope`: package for java, module for python, module/package for go
+/// - `root_path`: root directory of the source code
+pub fn find_function(
+    lang: &str,
+    funcion: &str,
+    clase: Option<&str>,
+    scope: Option<&str>,
+    root_path: &str,
+) -> Option<EntryPoint> {
+    match lang {
+        "java" => spring::find_function(funcion, clase.unwrap_or(""), scope.unwrap_or(""), root_path),
+        "python" => fastapi::find_function(funcion, clase.unwrap_or(""), scope.unwrap_or(""), root_path),
+        "go" => gin::find_function(funcion, scope.unwrap_or(""), root_path),
+        _ => None,
+    }
+}

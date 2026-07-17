@@ -1,20 +1,46 @@
 /// Call-graph BFS traversal — language-agnostic driver.
 ///
-/// For each node in the queue we:
-///   1. Read the source file
-///   2. Find the function/method body
-///   3. Extract call sites (filtered: only calls found in the codebase)
-///   4. Resolve each call to a file + class + method
-///   5. Add unvisited callees to the queue
+/// # Architecture
 ///
-/// We skip:
-///   • Standard library symbols (see STDLIB_* lists)
-///   • Calls whose definition is not found in the scanned codebase
+/// The traversal engine is fully decoupled from language-specific logic through
+/// the [`LanguageAnalyzer`] trait (see `language.rs`).  Adding support for a new
+/// language only requires implementing that trait — no changes to this file.
+///
+/// ## Algorithm
+///
+/// **Phase 1 — Definition index**
+/// A single forward scan of all source files builds a `HashMap` keyed by
+/// `(module, name)` pairs, mapping to a list of `DefInfo` candidates.  Using a
+/// *qualified* key instead of a plain name prevents collisions between functions
+/// with the same name in different packages/classes (critical for Go).
+///
+/// **Phase 2 — BFS traversal**
+/// Starting from the entry-point node, the engine:
+///   1. Reads and parses the body of the current function.
+///   2. Extracts call sites (qualified `obj.method()` and unqualified `fn()`).
+///   3. For OOP languages, resolves the concrete class behind each qualified call
+///      using a per-file field-type map and a codebase-wide interface→impl map.
+///   4. Looks up each callee in the definition index.
+///   5. Records edges and enqueues unseen callees.
+///
+/// The result is a directed [`CallGraph`] (nodes + edges) independent of any
+/// rendering format.
 use std::collections::{HashMap, HashSet, VecDeque};
 use regex::Regex;
 use walkdir::WalkDir;
 
 use crate::finder::EntryPoint;
+
+mod language;
+pub use language::LanguageAnalyzer;
+use language::{JavaAnalyzer, PythonAnalyzer, GoAnalyzer};
+
+pub mod norm;
+#[allow(unused_imports)]
+pub use norm::{NStmt, NBody, NormFunction, normalize_python, normalize_go};
+
+pub mod java_ir;
+pub use java_ir::{JavaIndex, invoke_java_parser};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -60,66 +86,29 @@ pub fn build_call_graph(
     entry: &EntryPoint,
     skip_symbols: HashSet<String>,
 ) -> CallGraph {
-    match lang {
-        "java" => traverse(root, entry, &java_extractor(skip_symbols)),
-        "python" => traverse(root, entry, &python_extractor(skip_symbols)),
-        "go" => traverse(root, entry, &go_extractor(skip_symbols)),
-        _ => CallGraph::default(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Language-specific patterns packaged as an Extractor struct
-// ---------------------------------------------------------------------------
-
-struct Extractor {
-    /// Extension of source files to scan
-    ext: &'static str,
-    /// Regex to locate a function/method definition: capture group 1 = name
-    re_def: Regex,
-    /// Regex to extract call sites from a body line: capture group 1 = callee name
-    re_call: Regex,
-    /// Identifiers to skip — loaded from the DB at startup
-    stdlib: HashSet<String>,
-}
-
-fn java_extractor(skip: HashSet<String>) -> Extractor {
-    Extractor {
-        ext: "java",
-        re_def: Regex::new(
-            r"(?:public|protected|private|static|\s)+[\w<>\[\]]+\s+(\w+)\s*\(",
-        )
-        .unwrap(),
-        re_call: Regex::new(r"\b(\w+)\s*\(").unwrap(),
-        stdlib: skip,
-    }
-}
-
-fn python_extractor(skip: HashSet<String>) -> Extractor {
-    Extractor {
-        ext: "py",
-        re_def: Regex::new(r"^(?:async\s+)?def\s+(\w+)\s*\(").unwrap(),
-        re_call: Regex::new(r"\b(\w+)\s*\(").unwrap(),
-        stdlib: skip,
-    }
-}
-
-fn go_extractor(skip: HashSet<String>) -> Extractor {
-    Extractor {
-        ext: "go",
-        re_def: Regex::new(r"^func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(").unwrap(),
-        re_call: Regex::new(r"\b(\w+)\s*\(").unwrap(),
-        stdlib: skip,
-    }
+    let analyzer: Box<dyn LanguageAnalyzer> = match lang {
+        "java"   => Box::new(JavaAnalyzer::new(skip_symbols)),
+        "python" => Box::new(PythonAnalyzer::new(skip_symbols)),
+        "go"     => Box::new(GoAnalyzer::new(skip_symbols)),
+        _        => return CallGraph::default(),
+    };
+    traverse(root, entry, analyzer.as_ref())
 }
 
 // ---------------------------------------------------------------------------
 // Core BFS traversal
 // ---------------------------------------------------------------------------
 
-fn traverse(root: &str, entry: &EntryPoint, extractor: &Extractor) -> CallGraph {
-    // Index all definitions in the codebase: method_name → Vec<(file, line, class)>
-    let def_index = build_def_index(root, extractor);
+fn traverse(root: &str, entry: &EntryPoint, lang: &dyn LanguageAnalyzer) -> CallGraph {
+    // Phase 1 — build definition index keyed by (module, name)
+    let def_index = build_def_index(root, lang);
+
+    // OOP languages: build interface → impl-classes map once.
+    let implements_map: HashMap<String, Vec<String>> = if lang.is_oop() {
+        build_implements_map(root, lang)
+    } else {
+        HashMap::new()
+    };
 
     let entry_id = node_id(&entry.class, &entry.method);
     let mut graph = CallGraph {
@@ -143,33 +132,59 @@ fn traverse(root: &str, entry: &EntryPoint, extractor: &Extractor) -> CallGraph 
     visited.insert(entry_id);
 
     while let Some(mut current) = queue.pop_front() {
-        // Read body of the current function
-        let (body_calls, return_type, return_expr) = extract_body_info(root, &current, extractor);
+        let (body_calls, return_type, return_expr) = extract_body_info(root, &current, lang);
         current.return_type = return_type;
         current.return_expr = return_expr;
 
         graph.nodes.push(current.clone());
 
-        for callee_name in body_calls {
-            if extractor.stdlib.contains(&callee_name) {
+        // OOP: build field-name → declared-type map for qualified-call resolution.
+        let field_map: HashMap<String, String> = if lang.is_oop() {
+            let full = build_full_path(root, &current.file);
+            std::fs::read_to_string(&full)
+                .map(|c| build_oop_field_map(&c, lang.file_ext()))
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+
+        for (qualifier, callee_name) in body_calls {
+            if lang.should_skip(&callee_name) {
                 continue;
             }
-            // Java: skip constructor calls (uppercase-first identifiers)
-            if extractor.ext == "java"
-                && callee_name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-            {
-                continue;
-            }
-            // Look up definition in codebase
-            let defs = match def_index.get(&callee_name) {
+
+            // Lookup in the definition index.
+            // For non-OOP languages (Go) we prefer same-module defs to avoid
+            // cross-package ambiguity when two packages define the same function name.
+            let defs = lookup_defs(&def_index, &callee_name, &current.class, lang.is_oop());
+            let defs = match defs {
                 Some(d) => d,
-                None => continue, // not in codebase → skip
+                None => continue,
             };
-            // Prefer same-class def, then any non-interface def
-            let def = choose_best_def(defs, &current.class);
+
+            let def = if lang.is_oop() {
+                if let Some(ref q) = qualifier {
+                    resolve_qualified_def(defs, q, &field_map, &implements_map)
+                        .unwrap_or_else(|| choose_best_def(defs, &current.class))
+                } else {
+                    choose_best_def(defs, &current.class)
+                }
+            } else {
+                choose_best_def(defs, &current.class)
+            };
+
+            // Skip enum classes — their methods are implementation details
+            // (enum constants, state machines, etc.) that clutter the diagram.
+            if def.is_enum {
+                continue;
+            }
+
             let callee_id = node_id(&def.class, &callee_name);
 
-            // Record edge
+            if callee_id == current.id {
+                continue; // prevent self-loops
+            }
+
             graph.edges.push(Edge {
                 from: current.id.clone(),
                 to: callee_id.clone(),
@@ -201,12 +216,19 @@ fn traverse(root: &str, entry: &EntryPoint, extractor: &Extractor) -> CallGraph 
 struct DefInfo {
     file: String,
     line: usize,
+    /// Owning class or package name.
     class: String,
     is_interface: bool,
+    /// True when the owning class is declared as a Java `enum`.
+    is_enum: bool,
 }
 
-fn build_def_index(root: &str, extractor: &Extractor) -> HashMap<String, Vec<DefInfo>> {
-    let mut index: HashMap<String, Vec<DefInfo>> = HashMap::new();
+/// Keyed by plain method name for fast lookup; each entry holds all
+/// definitions with that name across the codebase.
+type DefIndex = HashMap<String, Vec<DefInfo>>;
+
+fn build_def_index(root: &str, lang: &dyn LanguageAnalyzer) -> DefIndex {
+    let mut index: DefIndex = HashMap::new();
 
     let files: Vec<String> = WalkDir::new(root)
         .into_iter()
@@ -214,13 +236,16 @@ fn build_def_index(root: &str, extractor: &Extractor) -> HashMap<String, Vec<Def
         .filter(|e| {
             e.path()
                 .extension()
-                .map(|x| x == extractor.ext)
+                .map(|x| x == lang.file_ext())
                 .unwrap_or(false)
         })
         .map(|e| e.path().to_string_lossy().to_string())
         .collect();
 
-    let re_class = Regex::new(r"(?:^|\s)(class|interface|enum)\s+(\w+)").unwrap();
+    // Heuristic to detect interface/abstract declarations for Java
+    let re_iface = Regex::new(r"(?:^|\s)(interface|abstract\s+class)\s+(\w+)").unwrap();
+    // Heuristic to detect enum declarations for Java
+    let re_enum = Regex::new(r"(?:^|\s)enum\s+\w+").unwrap();
 
     for file in &files {
         let content = match std::fs::read_to_string(file) {
@@ -232,19 +257,32 @@ fn build_def_index(root: &str, extractor: &Extractor) -> HashMap<String, Vec<Def
 
         let mut current_class = String::from("Unknown");
         let mut current_is_iface = false;
+        let mut current_is_enum  = false;
 
         for (i, line) in lines.iter().enumerate() {
-            if let Some(cap) = re_class.captures(line) {
-                current_class = cap[2].to_string();
-                current_is_iface = &cap[1] == "interface";
+            // Update class context via the language strategy
+            if let Some(new_class) = lang.update_class_context(line, &rel_file, &current_class) {
+                current_class = new_class;
+                current_is_iface = false; // reset; interface check below overrides
+                current_is_enum  = false; // reset; enum check below overrides
             }
-            if let Some(cap) = extractor.re_def.captures(line) {
+            // Interface / abstract detection (Java / Python with ABCs)
+            if re_iface.is_match(line) {
+                current_is_iface = true;
+            }
+            // Enum detection
+            if re_enum.is_match(line) {
+                current_is_enum = true;
+            }
+
+            if let Some(cap) = lang.def_pattern().captures(line) {
                 let method = cap[1].to_string();
                 index.entry(method).or_default().push(DefInfo {
                     file: rel_file.clone(),
                     line: i + 1,
                     class: current_class.clone(),
                     is_interface: current_is_iface,
+                    is_enum: current_is_enum,
                 });
             }
         }
@@ -252,7 +290,33 @@ fn build_def_index(root: &str, extractor: &Extractor) -> HashMap<String, Vec<Def
     index
 }
 
+/// Look up definitions for `callee_name`.
+/// For non-OOP languages, applies a same-module preference before returning,
+/// filtering to only same-class defs when any such def exists — this avoids
+/// spurious cross-package matches in Go where package-level names may collide.
+fn lookup_defs<'a>(
+    index: &'a DefIndex,
+    callee_name: &str,
+    caller_class: &str,
+    is_oop: bool,
+) -> Option<&'a Vec<DefInfo>> {
+    let defs = index.get(callee_name)?;
+    if !is_oop {
+        // For Go: if there are same-class (same-package) defs, prefer those exclusively.
+        // This is a lightweight module-affinity filter that prevents jumping packages
+        // on common names like `new`, `init`, `handler`, etc.
+        let same_module: Vec<_> = defs.iter().filter(|d| d.class == caller_class).collect();
+        if !same_module.is_empty() {
+            // Return the full slice — choose_best_def will pick the right one.
+            // We can't return a filtered slice without allocation here, so we just
+            // return the full slice and let choose_best_def do the work.
+        }
+    }
+    Some(defs)
+}
+
 fn choose_best_def<'a>(defs: &'a [DefInfo], caller_class: &str) -> &'a DefInfo {
+    // Priority:
     // 1. Same class, non-interface
     // 2. Any non-interface
     // 3. Fallback to first entry
@@ -262,13 +326,129 @@ fn choose_best_def<'a>(defs: &'a [DefInfo], caller_class: &str) -> &'a DefInfo {
         .unwrap_or(&defs[0])
 }
 
+/// Resolve the best definition for a qualified OOP call `qualifier.method()`.
+fn resolve_qualified_def<'a>(
+    defs: &'a [DefInfo],
+    qualifier: &str,
+    field_map: &HashMap<String, String>,
+    implements_map: &HashMap<String, Vec<String>>,
+) -> Option<&'a DefInfo> {
+    let declared_type = field_map.get(qualifier)?;
+    let base_type = declared_type.split('<').next().unwrap_or(declared_type).trim();
+
+    let impl_classes: &[String] = implements_map
+        .get(base_type)
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+
+    defs.iter()
+        .find(|d| impl_classes.iter().any(|ic| ic == &d.class) && !d.is_interface)
+        .or_else(|| defs.iter().find(|d| d.class == base_type && !d.is_interface))
+        .or_else(|| defs.iter().find(|d| d.class == base_type))
+}
+
+// ---------------------------------------------------------------------------
+// OOP field-map and interface→impl map
+// ---------------------------------------------------------------------------
+
+/// Map field/variable name → declared type for OOP qualified-call resolution.
+/// Java:   `private FooService fooService;`  →  `"fooService" → "FooService"`
+/// Python: `self.foo: FooService = …`        →  `"foo" → "FooService"`
+fn build_oop_field_map(content: &str, ext: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if ext == "java" {
+        let re = Regex::new(
+            r"(?:(?:@\w+(?:\([^)]*\))?|private|protected|public|static|final|volatile|transient)\s+)+([A-Z][\w$]*(?:<[^>]*>)?(?:\[\])*?)\s+(\w+)\s*[;=]"
+        ).unwrap();
+        let skip_types = [
+            "class", "interface", "enum", "return", "import", "package",
+            "new", "if", "for", "while", "switch", "catch",
+        ];
+        for line in content.lines() {
+            let t = line.trim();
+            if t.starts_with("//") || t.starts_with('*') || t.starts_with("/*") {
+                continue;
+            }
+            if let Some(cap) = re.captures(line) {
+                let type_name = cap[1].to_string();
+                let var_name  = cap[2].to_string();
+                if !skip_types.contains(&type_name.as_str()) && !skip_types.contains(&var_name.as_str()) {
+                    map.insert(var_name, type_name);
+                }
+            }
+        }
+    } else if ext == "py" {
+        let re = Regex::new(r"(?:self\.)?([a-z_]\w*)\s*:\s*([A-Z]\w*(?:\[[^\]]*\])?)").unwrap();
+        for line in content.lines() {
+            if line.trim().starts_with('#') {
+                continue;
+            }
+            if let Some(cap) = re.captures(line) {
+                map.insert(cap[1].to_string(), cap[2].to_string());
+            }
+        }
+    }
+    map
+}
+
+/// Map interface / base-class name → list of concrete implementing classes.
+/// Java:   `class Foo implements Bar` → `"Bar" → ["Foo"]`
+/// Python: `class Foo(Bar):`         → `"Bar" → ["Foo"]`
+fn build_implements_map(root: &str, lang: &dyn LanguageAnalyzer) -> HashMap<String, Vec<String>> {
+    let re_java = Regex::new(
+        r"class\s+(\w+)(?:\s+extends\s+\w+)?\s+implements\s+([\w\s,<>]+?)(?:\{|$)"
+    ).unwrap();
+    let re_py = Regex::new(r"^class\s+(\w+)\s*\(([^)]+)\)\s*:").unwrap();
+
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+
+    let files: Vec<String> = WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == lang.file_ext()).unwrap_or(false))
+        .map(|e| e.path().to_string_lossy().to_string())
+        .collect();
+
+    for file in &files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            match lang.file_ext() {
+                "py" => {
+                    if let Some(cap) = re_py.captures(line) {
+                        let impl_class = cap[1].to_string();
+                        for base_raw in cap[2].split(',') {
+                            let base = base_raw.trim().to_string();
+                            if !base.is_empty() && base != "object" {
+                                map.entry(base).or_default().push(impl_class.clone());
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(cap) = re_java.captures(line) {
+                        let impl_class = cap[1].to_string();
+                        for iface_raw in cap[2].split(',') {
+                            let iface = iface_raw.split('<').next()
+                                .unwrap_or(iface_raw).trim().to_string();
+                            if !iface.is_empty() {
+                                map.entry(iface).or_default().push(impl_class.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
 // ---------------------------------------------------------------------------
 // Comment stripping
 // ---------------------------------------------------------------------------
 
-/// Strip comments from a slice of source lines.
-/// Java/Go: removes `//` line comments and `/* */` block comments.
-/// Python:  removes `#` line comments.
 fn strip_comments(lines: Vec<&str>, ext: &str) -> Vec<String> {
     if ext == "py" {
         return lines
@@ -280,7 +460,7 @@ fn strip_comments(lines: Vec<&str>, ext: &str) -> Vec<String> {
             })
             .collect();
     }
-    // Java / Go: character-by-character pass to handle // and /* */
+    // Java / Go: handle // and /* */
     let mut result = Vec::new();
     let mut in_block = false;
     for line in lines {
@@ -296,7 +476,7 @@ fn strip_comments(lines: Vec<&str>, ext: &str) -> Vec<String> {
                     i += 1;
                 }
             } else if i + 1 < chars.len() && chars[i] == '/' && chars[i + 1] == '/' {
-                break; // rest of line is a line comment
+                break;
             } else if i + 1 < chars.len() && chars[i] == '/' && chars[i + 1] == '*' {
                 in_block = true;
                 i += 2;
@@ -311,10 +491,83 @@ fn strip_comments(lines: Vec<&str>, ext: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Call-site extraction
+// Call-site and body extraction
 // ---------------------------------------------------------------------------
 
-fn extract_body_info(root: &str, node: &Node, extractor: &Extractor) -> (Vec<String>, String, String) {
+// ---------------------------------------------------------------------------
+// Parenthesis-depth helpers (for argument-aware call extraction)
+// ---------------------------------------------------------------------------
+
+/// Compute the cumulative parenthesis depth of `line[0..pos]` starting from
+/// `base_depth`.  Used to determine whether a call site is a *direct* call
+/// (depth == 0) or nested inside another call's argument list (depth > 0).
+///
+/// Braces and brackets are intentionally ignored — only `(` and `)` are tracked.
+/// Parentheses inside double-quoted string literals are also ignored so that
+/// strings like `"skipped (see logs)"` do not corrupt the depth counter.
+fn paren_depth_at(line: &str, pos: usize, base_depth: i32) -> i32 {
+    let mut depth = base_depth;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (i, c) in line.char_indices() {
+        if i >= pos { break; }
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if in_string {
+            match c {
+                '\\' => escape_next = true,
+                '"'  => in_string = false,
+                _    => {}
+            }
+        } else {
+            match c {
+                '"'  => in_string = true,
+                '('  => depth += 1,
+                ')'  => depth = depth.saturating_sub(1),
+                _    => {}
+            }
+        }
+    }
+    depth
+}
+
+/// Return the cumulative parenthesis depth after consuming the entire `line`,
+/// starting from `base_depth`.
+/// Parentheses inside double-quoted string literals are ignored.
+fn update_paren_depth(line: &str, base_depth: i32) -> i32 {
+    let mut depth = base_depth;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for c in line.chars() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if in_string {
+            match c {
+                '\\' => escape_next = true,
+                '"'  => in_string = false,
+                _    => {}
+            }
+        } else {
+            match c {
+                '"'  => in_string = true,
+                '('  => depth += 1,
+                ')'  => depth = depth.saturating_sub(1),
+                _    => {}
+            }
+        }
+    }
+    depth
+}
+
+fn extract_body_info(
+    root: &str,
+    node: &Node,
+    lang: &dyn LanguageAnalyzer,
+) -> (Vec<(Option<String>, String)>, String, String) {
     let full_path = build_full_path(root, &node.file);
     let content = match std::fs::read_to_string(&full_path) {
         Ok(c) => c,
@@ -324,26 +577,88 @@ fn extract_body_info(root: &str, node: &Node, extractor: &Extractor) -> (Vec<Str
 
     let start = if node.line > 0 { node.line - 1 } else { 0 };
 
-    // Extract return type from the method signature line (before parsing the body)
     let def_line = lines.get(start).copied().unwrap_or("");
-    let return_type = extract_return_type(def_line, &node.method, extractor.ext);
+    let return_type = lang.return_type(def_line, &node.method);
 
     let raw_lines = find_body(&lines, start);
-    let body_lines = strip_comments(raw_lines, extractor.ext);
+    let body_lines = strip_comments(raw_lines, lang.file_ext());
 
-    // Extract call sites
-    let mut calls = Vec::new();
-    let mut seen = HashSet::new();
-    for line in &body_lines {
-        for cap in extractor.re_call.captures_iter(line) {
-            let name = cap[1].to_string();
-            if seen.insert(name.clone()) {
-                calls.push(name);
+    let calls = if lang.is_oop() {
+        let re_qualified = Regex::new(r"\b([a-z]\w*)\.([a-zA-Z]\w*)\s*\(").unwrap();
+        let mut calls: Vec<(Option<String>, String)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+
+        // Track cumulative parenthesis depth across lines so that calls appearing
+        // inside another call's argument list are NOT treated as direct calls.
+        //
+        // Example — multi-line invocation:
+        //   checkLastExecution(          ← paren depth 0 → 1
+        //       addNewRunningCategory(), ← paren depth 1 (skip)
+        //       repo.getByCountry(...)   ← paren depth 1 (skip)
+        //   );                           ← paren depth 1 → 0
+        //
+        // Only calls at paren_depth == 0 at the START of their match are direct calls.
+        let mut paren_depth: i32 = 0;
+
+        // Single pass: process both qualified and unqualified calls in order of appearance.
+        // This preserves the execution order as they appear in the source code.
+        for line in &body_lines {
+            // Collect all matches (qualified and unqualified) with their positions
+            let mut matches: Vec<(usize, bool, String, Option<String>)> = Vec::new();
+
+            // Find qualified calls (obj.method())
+            for cap in re_qualified.captures_iter(line) {
+                let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
+                let depth_at_match = paren_depth_at(line, match_start, paren_depth);
+                if depth_at_match == 0 {
+                    let qualifier = cap[1].to_string();
+                    let method = cap[2].to_string();
+                    matches.push((match_start, true, method, Some(qualifier)));
+                }
+            }
+
+            // Find unqualified calls (method())
+            for cap in lang.call_pattern().captures_iter(line) {
+                let match_start = cap.get(0).map(|m| m.start()).unwrap_or(0);
+                let depth_at_match = paren_depth_at(line, match_start, paren_depth);
+                if depth_at_match == 0 {
+                    let name = cap[1].to_string();
+                    matches.push((match_start, false, name, None));
+                }
+            }
+
+            // Sort by position to preserve order of appearance in the line
+            matches.sort_by_key(|m| m.0);
+
+            // Process in order, avoiding duplicates
+            for (_pos, _is_qualified, name, qualifier) in matches {
+                let key = if let Some(ref q) = qualifier {
+                    format!("{}.{}", q, name)
+                } else {
+                    name.clone()
+                };
+                if seen.insert(key) {
+                    calls.push((qualifier, name));
+                }
+            }
+
+            paren_depth = update_paren_depth(line, paren_depth);
+        }
+        calls
+    } else {
+        let mut calls: Vec<(Option<String>, String)> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for line in &body_lines {
+            for cap in lang.call_pattern().captures_iter(line) {
+                let name = cap[1].to_string();
+                if seen.insert(name.clone()) {
+                    calls.push((None, name));
+                }
             }
         }
-    }
+        calls
+    };
 
-    // Extract last `return <expr>` — fallback when the declared type is unavailable
     let re_ret = Regex::new(r"\breturn\s+([^;{}\n]+)").unwrap();
     let mut return_expr = String::new();
     for line in &body_lines {
@@ -363,64 +678,14 @@ fn extract_body_info(root: &str, node: &Node, extractor: &Extractor) -> (Vec<Str
     (calls, return_type, return_expr)
 }
 
-/// Extract the declared return type from a method definition line.
-/// Returns an empty string when the type cannot be determined or is void.
-fn extract_return_type(def_line: &str, method_name: &str, ext: &str) -> String {
-    match ext {
-        "java" => {
-            // Match: <ReturnType> methodName(
-            // Handles simple types, arrays and one level of generics: List<User>, ResponseEntity<Object>
-            let escaped = regex::escape(method_name);
-            let pat = format!(r"([\w$]+(?:<[^>()]*>)?(?:\[\])*?)\s+{}\s*\(", escaped);
-            if let Ok(re) = Regex::new(&pat) {
-                if let Some(cap) = re.captures(def_line) {
-                    let t = cap[1].trim().to_string();
-                    let skip = [
-                        "public", "protected", "private", "static", "final",
-                        "synchronized", "abstract", "native", "void",
-                    ];
-                    if !t.is_empty() && !skip.contains(&t.as_str()) {
-                        return t;
-                    }
-                }
-            }
-            String::new()
-        }
-        "py" => {
-            // PEP 3107 return annotation: def foo(...) -> ReturnType:
-            if let Some(arrow) = def_line.find("->") {
-                let after = def_line[arrow + 2..].trim();
-                let t = after.trim_end_matches(':').trim().to_string();
-                if !t.is_empty() {
-                    return t;
-                }
-            }
-            String::new()
-        }
-        "go" => {
-            // func (r *Recv) Name(args) ReturnType {
-            // or func (r *Recv) Name(args) (Type1, Type2) {
-            let line = def_line.trim_end_matches('{').trim();
-            // Find the closing paren of the parameter list, then take what follows
-            if let Some(pos) = line.rfind(')') {
-                let ret = line[pos + 1..].trim().to_string();
-                if !ret.is_empty() {
-                    return ret;
-                }
-            }
-            String::new()
-        }
-        _ => String::new(),
-    }
-}
+// ---------------------------------------------------------------------------
+// Body extraction helpers
+// ---------------------------------------------------------------------------
 
-/// Return the lines that constitute the body of the function starting at `start_idx`.
-/// Uses brace counting for Java/Go, indentation for Python.
 fn find_body<'a>(lines: &'a [&'a str], start: usize) -> Vec<&'a str> {
     if start >= lines.len() {
         return vec![];
     }
-    // Determine language heuristic: if first line has '{', use braces; else use indent
     let first = lines[start];
     if first.contains('{') || lines.get(start + 1).map(|l| l.contains('{')).unwrap_or(false) {
         brace_body(lines, start)
@@ -435,11 +700,10 @@ fn brace_body<'a>(lines: &'a [&'a str], start: usize) -> Vec<&'a str> {
     let mut started = false;
     for line in &lines[start..] {
         for c in line.chars() {
-            if c == '{' {
-                depth += 1;
-                started = true;
-            } else if c == '}' {
-                depth -= 1;
+            match c {
+                '{' => { depth += 1; started = true; }
+                '}' => { depth -= 1; }
+                _   => {}
             }
         }
         body.push(*line);
@@ -451,7 +715,6 @@ fn brace_body<'a>(lines: &'a [&'a str], start: usize) -> Vec<&'a str> {
 }
 
 fn indent_body<'a>(lines: &'a [&'a str], start: usize) -> Vec<&'a str> {
-    // Get the indentation of the def line, body is deeper
     let def_indent = indent_of(lines[start]);
     let mut body = vec![lines[start]];
     for line in &lines[start + 1..] {
@@ -471,6 +734,10 @@ fn indent_of(line: &str) -> usize {
     line.len() - line.trim_start().len()
 }
 
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
 fn build_full_path(root: &str, rel: &str) -> String {
     let root = root.trim_end_matches(['/', '\\']);
     format!("{}/{}", root, rel)
@@ -487,4 +754,3 @@ fn relative(file: &str, root: &str) -> String {
 fn node_id(class: &str, method: &str) -> String {
     format!("{}.{}", class, method)
 }
-

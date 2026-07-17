@@ -94,7 +94,7 @@ fn flow_dot(graph: &CallGraph) -> String {
 
     for node in &graph.nodes {
         let sid = &id_map[node.id.as_str()];
-        let label = format!("{}.{}()", node.class, node.method);
+        let label = format!("{}/{}()", node.class, node.method);
         out.push_str(&format!("  {} [label=\"{}\"];\n", sid, dot_escape(&label)));
     }
     out.push('\n');

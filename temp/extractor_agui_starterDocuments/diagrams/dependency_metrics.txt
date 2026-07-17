@@ -1,0 +1,61 @@
+=== Dependency Metrics ===
+
+Packages         : 53
+Direct deps      : 234
+Cycles           : 2
+Packages in cycle: 18
+
+--- Cycles ---
+  Cycle 1 (16 packages):
+    com.enel.virtualentity.batch.equipment.topology
+    com.enel.virtualentity.utils.mapper
+    com.enel.virtualentity.service.topology
+    com.enel.virtualentity.service.ioda
+    com.enel.virtualentity.controller
+    com.enel.virtualentity.batch.equipment.extractor.reader
+    com.enel.virtualentity.service.datatransformers.dtos
+    com.enel.virtualentity.service.datatransformers
+    com.enel.virtualentity.utils
+    com.enel.virtualentity.batch.equipment.extractor.processor
+    com.enel.virtualentity.batch.equipment.extractor.conf
+    com.enel.virtualentity.service
+    com.enel.virtualentity.batch.equipment.transformer.validators
+    com.enel.virtualentity.batch.equipment.extractor.writer
+    com.enel.virtualentity.batch.equipment.transformer
+    com.enel.virtualentity.batch.equipment.agui.mapper
+  Cycle 2 (2 packages):
+    com.enel.virtualentity.batch.equipment.common
+    com.enel.virtualentity.batch.equipment.agui.conf
+
+--- Most Coupled Packages (fan-in + fan-out, top 10) ---
+  package                                                       fi   fo  total
+  ------------------------------------------------------------  ---  ---  -----
+  com.enel.virtualentity.service                                 13   29     42
+  com.enel.virtualentity.batch.equipment.extractor.conf           2   24     26
+  com.enel.virtualentity.batch.equipment.transformer             11   14     25
+  com.enel.virtualentity.batch.equipment.extractor.controller     0   21     21
+  com.enel.virtualentity.batch.equipment.extractor.dto           17    2     19
+  com.enel.virtualentity.utils                                   12    7     19
+  com.enel.virtualentity.controller.readonly                      0   18     18
+  com.enel.virtualentity.dto                                     16    2     18
+  com.enel.virtualentity.enums                                   17    0     17
+  com.enel.virtualentity.controller                               3   13     16
+
+--- Dependency Depth (longest path: 3) ---
+  depth  package
+  -----  ------------------------------------------------------------
+      3  com.enel.virtualentity.s3.tempcred.helper
+      2  com.enel.virtualentity.batch.equipment.extractor.repository.old
+      2  com.enel.virtualentity.s3.tempcred.config
+      1  com.enel.virtualentity.batch.equipment.agui.mapper
+      1  com.enel.virtualentity.controller
+      1  com.enel.virtualentity.batch.equipment.extractor.dto
+      1  com.enel.virtualentity.batch.equipment.common
+      1  com.enel.virtualentity.dto.elasticsearch
+      1  com.enel.virtualentity.service.ioda
+      1  com.enel.virtualentity.service.topology
+      1  com.enel.virtualentity.enums
+      1  com.enel.virtualentity.service.datatransformers
+      1  com.enel.virtualentity.exception
+      1  com.enel.virtualentity.dto.summary
+      1  com.enel.virtualentity.conf.s3

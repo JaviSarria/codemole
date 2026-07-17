@@ -1,12 +1,15 @@
 /// Native SVG renderer — zero external dependencies.
 ///
-/// Implements three renderers:
+/// Implements four renderers:
 ///   SequenceSVG   — sequence diagram
 ///   FlowchartSVG  — for Python / Go (flowchart TD)
 ///   ClassSVG      — for Java (classDiagram)
+///   ComponentSVG  — layered component/module diagram
 use std::collections::HashMap;
 use crate::parser::{CallGraph, Node};
 use crate::diagram::{SeqEvent, build_events};
+use crate::diagram::component::{ComponentDiagram, Layer};
+use crate::diagram::dependency::DependencyDiagram;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -22,6 +25,14 @@ pub fn classflow_svg(title: &str, lang: &str, graph: &CallGraph) -> String {
     } else {
         render_flowchart(title, graph)
     }
+}
+
+pub fn component_svg(title: &str, diagram: &ComponentDiagram) -> String {
+    render_component(title, diagram)
+}
+
+pub fn dependency_svg(title: &str, diagram: &DependencyDiagram) -> String {
+    render_dependency(title, diagram)
 }
 
 // ---------------------------------------------------------------------------
@@ -52,7 +63,7 @@ fn with_title(title: &str, w: f64, h: f64, body: &str) -> String {
     let th = TITLE_H;
     let rpad = w - 20.0;
     format!(
-        "{header}  <title>{esc}</title>\n  \
+        "{header}  \
          <text x=\"{cx:.1}\" y=\"{ty:.1}\" text-anchor=\"middle\" \
          style=\"font-weight:bold;font-size:15px;fill:#333\">{esc}</text>\n  \
          <line x1=\"20\" y1=\"{th:.1}\" x2=\"{rpad:.1}\" y2=\"{th:.1}\" \
@@ -81,8 +92,10 @@ fn svg_header(w: f64, h: f64) -> String {
       .class-box  {{ fill: #f0f7ff; stroke: #4a90d9; stroke-width:1.5; rx:4; }}
       .class-hdr  {{ fill: #4a90d9; rx:4; }}
       .class-htxt {{ fill: white; font-weight: bold; }}
-      .edge-line  {{ stroke: #555; stroke-width:1.5; fill:none; }}
-      .edge-lab   {{ fill: #555; font-size: 11px; }}
+      .edge-line   {{ stroke: #555; stroke-width:1.5; fill:none; }}
+      .edge-lab    {{ fill: #555; font-size: 11px; }}
+      .arrow-group {{ cursor: crosshair; }}
+      .ret-hitpad  {{ fill: rgba(0,0,0,0); stroke: none; }}
     </style>
     <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <polygon points="0 0, 8 3, 0 6" class="arrow-head"/>
@@ -121,7 +134,8 @@ fn render_sequence(title: &str, graph: &CallGraph) -> String {
     let top_margin = 10.0;
     let col_pad   = 40.0; // extra horizontal padding per column
     let call_h    = 55.0; // vertical spacing per event row
-    let act_w     = 12.0; // activation-bar width
+    let act_w        = 12.0;  // activation-bar width
+    let act_nest_off = 4.0_f64; // horizontal shift per nesting depth level
 
     let col_widths: Vec<f64> = participants
         .iter()
@@ -154,28 +168,48 @@ fn render_sequence(title: &str, graph: &CallGraph) -> String {
         .map(|i| life_top + (i as f64 + 1.0) * call_h)
         .collect();
 
-    // ---- First pass: compute activation bars ----
-    // act_starts[class] = stack of (y_start) for open activations
-    let mut act_starts: HashMap<String, Vec<f64>> = HashMap::new();
-    // collected bars: (class, y_start, y_end)
-    let mut act_bars: Vec<(String, f64, f64)> = Vec::new();
+    // ---- First pass: activation bars with depth tracking ----
+    // act_stack[class] = stack of (y_start, depth_index)
+    // depth_index == 0 → base bar centred on lifeline; each extra level shifts right by act_nest_off
+    let mut act_stack: HashMap<String, Vec<(f64, usize)>> = HashMap::new();
+    // collected bars: (class, y_start, y_end, depth_index)
+    let mut act_bars: Vec<(String, f64, f64, usize)> = Vec::new();
+    // per-event (from_depth, to_depth) used when rendering arrows
+    let mut event_depths: Vec<(usize, usize)> = Vec::with_capacity(n_events);
+
+    // Seed the entry-class initial activation (starts at the lifeline top)
+    let entry_class_name = graph.nodes.first().map(|n| n.class.clone()).unwrap_or_default();
+    if !entry_class_name.is_empty() {
+        act_stack.entry(entry_class_name.clone()).or_default().push((life_top, 0));
+    }
 
     for (ev, &y) in events.iter().zip(event_ys.iter()) {
         match ev {
-            SeqEvent::Call   { to, .. }   => { act_starts.entry(to.clone()).or_default().push(y); }
-            SeqEvent::Return { from, .. } => {
-                if let Some(stack) = act_starts.get_mut(from.as_str()) {
-                    if let Some(y_start) = stack.pop() {
-                        act_bars.push((from.clone(), y_start, y));
+            SeqEvent::Call { from, to, .. } => {
+                let fd = act_stack.get(from.as_str())
+                    .and_then(|s| s.last()).map(|&(_, d)| d).unwrap_or(0);
+                let td = act_stack.get(to.as_str()).map(|s| s.len()).unwrap_or(0);
+                event_depths.push((fd, td));
+                act_stack.entry(to.clone()).or_default().push((y, td));
+            }
+            SeqEvent::Return { from, to, .. } => {
+                let fd = act_stack.get(from.as_str())
+                    .and_then(|s| s.last()).map(|&(_, d)| d).unwrap_or(0);
+                let td = act_stack.get(to.as_str())
+                    .and_then(|s| s.last()).map(|&(_, d)| d).unwrap_or(0);
+                event_depths.push((fd, td));
+                if let Some(stack) = act_stack.get_mut(from.as_str()) {
+                    if let Some((y_start, depth)) = stack.pop() {
+                        act_bars.push((from.clone(), y_start, y, depth));
                     }
                 }
             }
         }
     }
-    // Flush any activations never explicitly returned (e.g., entry point)
-    for (class, stack) in &act_starts {
-        for &y_start in stack {
-            act_bars.push((class.clone(), y_start, total_h - 20.0));
+    // Flush unclosed activations (entry point + any still open at end)
+    for (class, stack) in &act_stack {
+        for &(y_start, depth) in stack {
+            act_bars.push((class.clone(), y_start, total_h - 20.0, depth));
         }
     }
 
@@ -197,62 +231,91 @@ fn render_sequence(title: &str, graph: &CallGraph) -> String {
 
     // ---- Lifelines ----
     let life_bot = total_h - 20.0;
-    for (i, _) in participants.iter().enumerate() {
+    for (i, node) in participants.iter().enumerate() {
         let cx = col_x[i];
+        let hit_w = 20.0; // wide transparent hit area around the 1px dashed line
         body.push_str(&format!(
-            "  <line x1=\"{cx:.1}\" y1=\"{lt:.1}\" x2=\"{cx:.1}\" y2=\"{lb:.1}\" class=\"life-line\"/>\n",
-            cx = cx, lt = life_top, lb = life_bot
+            "  <line x1=\"{cx:.1}\" y1=\"{lt:.1}\" x2=\"{cx:.1}\" y2=\"{lb:.1}\" class=\"life-line\" data-participant=\"{name}\"/>\
+               <rect x=\"{rx:.1}\" y=\"{lt:.1}\" width=\"{hw:.1}\" height=\"{ht:.1}\" \
+                fill=\"rgba(0,0,0,0)\" stroke=\"none\" pointer-events=\"all\" style=\"cursor:crosshair\" \
+                data-participant=\"{name}\" class=\"life-hit\"/>\n",
+            cx = cx, lt = life_top, lb = life_bot, name = xml_escape(&node.class),
+            rx = cx - hit_w / 2.0, hw = hit_w, ht = life_bot - life_top
         ));
     }
 
-    // ---- Activation bars (drawn before arrows so arrows appear on top) ----
-    for (class, y_start, y_end) in &act_bars {
+    // ---- Activation bars (drawn before arrows; sorted by depth so nested bars render on top) ----
+    act_bars.sort_by_key(|b| b.3); // depth ascending: base (0) drawn first, nested on top
+    for (class, y_start, y_end, depth) in &act_bars {
         if let Some(&ci) = col_idx.get(class.as_str()) {
-            let cx = col_x[ci];
-            let bar_h = (y_end - y_start).max(4.0);
+            let bar_cx = col_x[ci] + *depth as f64 * act_nest_off;
+            let bar_h  = (y_end - y_start).max(4.0);
             body.push_str(&format!(
                 "  <rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" rx=\"2\" class=\"activation\"/>\n",
-                x = cx - act_w / 2.0, y = y_start, w = act_w, h = bar_h
+                x = bar_cx - act_w / 2.0, y = y_start, w = act_w, h = bar_h
             ));
         }
     }
 
     // ---- Arrows ----
-    for (ev, &y) in events.iter().zip(event_ys.iter()) {
+    // Arrow x-coords connect to the EDGE of the activation bar, not the lifeline centre.
+    // For depth d the bar centre is at col_x + d*act_nest_off, so its edges are ±act_w/2 from there.
+    // Helper: given column ci and depth d, return the edge x facing toward column cj.
+    let bar_edge = |ci: usize, d: usize, toward: usize| -> f64 {
+        let cx = col_x[ci] + d as f64 * act_nest_off;
+        if ci <= toward { cx + act_w / 2.0 } else { cx - act_w / 2.0 }
+    };
+
+    for (idx, (ev, &y)) in events.iter().zip(event_ys.iter()).enumerate() {
+        let (fd, td) = event_depths.get(idx).copied().unwrap_or((0, 0));
         match ev {
             SeqEvent::Call { from, to, label } => {
                 let fi = col_idx.get(from.as_str()).copied().unwrap_or(0);
                 let ti = col_idx.get(to.as_str()).copied().unwrap_or(0);
-                let x1 = col_x[fi];
-                let x2 = col_x[ti];
                 let call_label = format!("{}()", label);
-                let lw = text_width(&call_label) + 10.0;
+                let lw = text_width(&call_label) + 6.0;
                 let lh = 20.0;
 
                 if fi == ti {
-                    // Self-call loop
-                    let loop_w = 55.0;
-                    let loop_h = 36.0;
-                    let rx = x1 + act_w / 2.0;
+                    // Self-call: loop from right edge of current (fd) bar
+                    //            to right edge of the new nested (td) bar.
+                    let from_right = col_x[fi] + fd as f64 * act_nest_off + act_w / 2.0;
+                    let to_right   = col_x[fi] + td as f64 * act_nest_off + act_w / 2.0;
+                    let loop_w = 40.0;
+                    let loop_h = 32.0;
+                    let loop_far = to_right + loop_w;
                     body.push_str(&format!(
-                        "  <path d=\"M {x1:.1},{y:.1} H {r:.1} V {yb:.1} H {x2:.1}\" \
+                        "  <path d=\"M {fr:.1},{y:.1} H {r:.1} V {yb:.1} H {tr:.1}\" \
                             class=\"arrow\" marker-end=\"url(#arr)\"/>\n\
                            <rect x=\"{lx:.1}\" y=\"{ly:.1}\" width=\"{lw:.1}\" height=\"{lh:.1}\" rx=\"3\" class=\"msg-box\"/>\n\
                            <text x=\"{tx:.1}\" y=\"{ty:.1}\" text-anchor=\"middle\" class=\"msg-text\">{lab}</text>\n",
-                        x1 = x1, y = y, r = rx + loop_w, yb = y + loop_h, x2 = x1,
-                        lx = rx + loop_w / 2.0 - lw / 2.0, ly = y - lh - 2.0,
+                        fr = from_right, y = y, r = loop_far, yb = y + loop_h, tr = to_right,
+                        lx = (from_right + loop_far) / 2.0 - lw / 2.0, ly = y - lh - 2.0,
                         lw = lw, lh = lh,
-                        tx = rx + loop_w / 2.0, ty = y - lh / 2.0 - 2.0 + FONT_SIZE / 2.0,
+                        tx = (from_right + loop_far) / 2.0,
+                        ty = y - lh / 2.0 - 2.0 + FONT_SIZE / 2.0,
                         lab = xml_escape(&call_label)
                     ));
                 } else {
+                    let x1 = bar_edge(fi, fd, ti);
+                    let x2 = bar_edge(ti, td, fi);
                     let mid_x = (x1 + x2) / 2.0;
+                    let hit_x = f64::min(x1, x2);
+                    let hit_w2 = (x2 - x1).abs();
                     body.push_str(&format!(
                         "  <line x1=\"{x1:.1}\" y1=\"{y:.1}\" x2=\"{x2:.1}\" y2=\"{y:.1}\" \
-                            class=\"arrow\" marker-end=\"url(#arr)\"/>\n\
-                           <rect x=\"{lx:.1}\" y=\"{ly:.1}\" width=\"{lw:.1}\" height=\"{lh:.1}\" rx=\"3\" class=\"msg-box\"/>\n\
+                            class=\"arrow\" marker-end=\"url(#arr)\" pointer-events=\"stroke\" \
+                            data-label=\"{hit_lab}\" data-kind=\"call\"/>\
+                           <rect x=\"{hx:.1}\" y=\"{hy:.1}\" width=\"{hw:.1}\" height=\"24\" \
+                            class=\"ret-hitpad\" pointer-events=\"all\" \
+                            data-label=\"{hit_lab}\" data-kind=\"call\"/>\
+                           <rect x=\"{lx:.1}\" y=\"{ly:.1}\" width=\"{lw:.1}\" height=\"{lh:.1}\" rx=\"3\" \
+                            class=\"msg-box\" pointer-events=\"all\" \
+                            data-label=\"{hit_lab}\" data-kind=\"call\"/>\
                            <text x=\"{tx:.1}\" y=\"{ty:.1}\" text-anchor=\"middle\" class=\"msg-text\">{lab}</text>\n",
                         x1 = x1, y = y, x2 = x2,
+                        hit_lab = xml_escape(&call_label),
+                        hx = hit_x, hy = y - 12.0, hw = hit_w2,
                         lx = mid_x - lw / 2.0, ly = y - lh - 2.0,
                         lw = lw, lh = lh,
                         tx = mid_x, ty = y - lh / 2.0 - 2.0 + FONT_SIZE / 2.0,
@@ -264,21 +327,29 @@ fn render_sequence(title: &str, graph: &CallGraph) -> String {
             SeqEvent::Return { from, to, label } => {
                 let fi = col_idx.get(from.as_str()).copied().unwrap_or(0);
                 let ti = col_idx.get(to.as_str()).copied().unwrap_or(0);
-                let x1 = col_x[fi];
-                let x2 = col_x[ti];
                 let ret_label = label.as_str();
 
                 if fi == ti {
-                    // Self-return (same column) — skip, already closed by the self-call loop
+                    // Self-return — skip; the loop path already shows the call/return visually
                 } else {
+                    let x1 = bar_edge(fi, fd, ti);
+                    let x2 = bar_edge(ti, td, fi);
                     let mid_x = (x1 + x2) / 2.0;
+                    let hit_x = f64::min(x1, x2);
+                    let hit_w = (x2 - x1).abs();
                     body.push_str(&format!(
                         "  <line x1=\"{x1:.1}\" y1=\"{y:.1}\" x2=\"{x2:.1}\" y2=\"{y:.1}\" \
-                            class=\"ret-arrow\" marker-end=\"url(#ret-arr)\"/>\n\
-                           <text x=\"{tx:.1}\" y=\"{ty:.1}\" text-anchor=\"middle\" class=\"ret-text\">{lab}</text>\n",
+                            class=\"ret-arrow\" marker-end=\"url(#ret-arr)\" pointer-events=\"stroke\" \
+                            data-label=\"{hit_lab}\" data-kind=\"return\"/>\
+                           <text x=\"{tx:.1}\" y=\"{ty:.1}\" text-anchor=\"middle\" class=\"ret-text\">{lab}</text>\
+                           <rect x=\"{hx:.1}\" y=\"{hy:.1}\" width=\"{hw:.1}\" height=\"24\" \
+                            class=\"ret-hitpad\" pointer-events=\"all\" \
+                            data-label=\"{hit_lab}\" data-kind=\"return\"/>\n",
                         x1 = x1, y = y, x2 = x2,
+                        hit_lab = xml_escape(ret_label),
                         tx = mid_x, ty = y - 4.0,
-                        lab = xml_escape(ret_label)
+                        lab = xml_escape(ret_label),
+                        hx = hit_x, hy = y - 12.0, hw = hit_w
                     ));
                 }
             }
@@ -368,7 +439,7 @@ fn render_flowchart(title: &str, graph: &CallGraph) -> String {
     // Nodes
     for (i, node) in graph.nodes.iter().enumerate() {
         let (x, y) = pos[i];
-        let label = format!("{}.{}", node.class, node.method);
+        let label = format!("{}/{}", node.class, node.method);
         let cx = x + node_w / 2.0;
         body.push_str(&format!(
             r#"  <rect x="{x:.1}" y="{y:.1}" width="{nw:.1}" height="{nh:.1}" rx="6" class="node-box"/>
@@ -687,6 +758,10 @@ fn render_class(title: &str, graph: &CallGraph) -> String {
 // BFS level assignment helper
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// BFS level assignment helper
+// ---------------------------------------------------------------------------
+
 fn bfs_levels(graph: &CallGraph) -> (Vec<usize>, usize) {
     use std::collections::VecDeque;
     let n = graph.nodes.len();
@@ -730,4 +805,381 @@ fn bfs_levels(graph: &CallGraph) -> (Vec<usize>, usize) {
     }
     let max = levels.iter().copied().max().unwrap_or(0);
     (levels, max)
+}
+
+// ---------------------------------------------------------------------------
+// Component diagram
+// ---------------------------------------------------------------------------
+
+fn render_component(title: &str, diagram: &ComponentDiagram) -> String {
+    if diagram.modules.is_empty() {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"300\" height=\"80\">\
+                <text x=\"10\" y=\"40\">No components</text></svg>".to_string();
+    }
+
+    // ── Layout constants ─────────────────────────────────────────────────────
+    let margin      = 28.0_f64;
+    let mod_min_w   = 155.0_f64;
+    let hpad        = 18.0_f64;   // horizontal padding in module box label
+    let hdr_h       = 26.0_f64;   // module header row
+    let cls_h       = 16.0_f64;   // height per class row
+    let box_bot     = 10.0_f64;   // bottom padding inside box
+    let mod_gap     = 18.0_f64;   // gap between sibling modules
+    let band_lbl_h  = 22.0_f64;   // space for layer label above modules
+    let band_vpad   = 12.0_f64;   // top+bottom padding inside band
+    let band_gap    = 44.0_f64;   // vertical gap between bands (arrows route here)
+
+    // ── Group modules by active layers ───────────────────────────────────────
+    let mut band_groups: Vec<(Layer, Vec<&crate::diagram::component::ModuleNode>)> = Vec::new();
+    for layer in Layer::all_ordered() {
+        let grp: Vec<_> = diagram.modules.iter().filter(|m| m.layer == layer).collect();
+        if !grp.is_empty() {
+            band_groups.push((layer, grp));
+        }
+    }
+    let n_bands = band_groups.len();
+
+    // ── Per-module box dimensions ─────────────────────────────────────────────
+    let mod_w = |m: &crate::diagram::component::ModuleNode| -> f64 {
+        let lw = text_width(&m.label) + hpad * 2.0;
+        let cw = m.classes.iter()
+            .map(|c| text_width(c) + hpad + 4.0)
+            .fold(0.0_f64, f64::max);
+        f64::max(mod_min_w, f64::max(lw, cw))
+    };
+    let mod_h = |m: &crate::diagram::component::ModuleNode| -> f64 {
+        hdr_h + (m.classes.len() as f64) * cls_h + box_bot
+    };
+
+    // ── Canvas width ─────────────────────────────────────────────────────────
+    let band_cw = |grp: &[&crate::diagram::component::ModuleNode]| -> f64 {
+        let w: f64 = grp.iter().map(|m| mod_w(m)).sum();
+        w + (grp.len().saturating_sub(1)) as f64 * mod_gap
+    };
+    let max_cw = band_groups.iter()
+        .map(|(_, g)| band_cw(g))
+        .fold(300.0_f64, f64::max);
+    let canvas_w = max_cw + 2.0 * margin;
+
+    // ── Band y-positions and heights ─────────────────────────────────────────
+    let band_heights: Vec<f64> = band_groups.iter().map(|(_, grp)| {
+        let max_mh = grp.iter().map(|m| mod_h(m)).fold(0.0_f64, f64::max);
+        max_mh + band_lbl_h + band_vpad * 2.0
+    }).collect();
+
+    let mut band_y: Vec<f64> = Vec::with_capacity(n_bands);
+    let mut y_acc = margin;
+    for (i, h) in band_heights.iter().enumerate() {
+        band_y.push(y_acc);
+        y_acc += h + if i + 1 < n_bands { band_gap } else { 0.0 };
+    }
+    let canvas_h = y_acc + margin;
+
+    // ── Module positions: id → (x, y, w, h, band_idx) ────────────────────────
+    let mut mod_rect: HashMap<&str, (f64, f64, f64, f64)>  = HashMap::new();
+    let mut mod_band: HashMap<&str, usize>                  = HashMap::new();
+
+    for (bi, (_, grp)) in band_groups.iter().enumerate() {
+        let cw   = band_cw(grp);
+        let bh   = band_heights[bi];
+        let by   = band_y[bi];
+        let mut x = (canvas_w - cw) / 2.0;
+        for m in grp {
+            let mw = mod_w(m);
+            let mh = mod_h(m);
+            let my = by + band_lbl_h + band_vpad
+                + (bh - band_lbl_h - band_vpad * 2.0 - mh) / 2.0;
+            mod_rect.insert(m.id.as_str(), (x, my, mw, mh));
+            mod_band.insert(m.id.as_str(), bi);
+            x += mw + mod_gap;
+        }
+    }
+
+    let mut body = String::new();
+
+    // ── Layer band backgrounds ────────────────────────────────────────────────
+    for (bi, (layer, _)) in band_groups.iter().enumerate() {
+        let bx = margin / 2.0;
+        let bw = canvas_w - margin;
+        let by = band_y[bi];
+        let bh = band_heights[bi];
+        body.push_str(&format!(
+            "  <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"8\" \
+             fill=\"{}\" stroke=\"{}\" stroke-width=\"1.5\"/>\n",
+            bx, by, bw, bh, layer.band_color(), layer.border_color()
+        ));
+        body.push_str(&format!(
+            "  <text x=\"{:.1}\" y=\"{:.1}\" \
+             style=\"font-size:11px;font-weight:bold;fill:{}\">«{}»</text>\n",
+            bx + 10.0, by + 15.0, layer.border_color(), layer.label()
+        ));
+    }
+
+    // ── Dependency arrows (drawn before boxes) ────────────────────────────────
+    for (from_id, to_id) in &diagram.deps {
+        let src = mod_rect.get(from_id.as_str());
+        let dst = mod_rect.get(to_id.as_str());
+        let fb  = mod_band.get(from_id.as_str()).copied();
+        let tb  = mod_band.get(to_id.as_str()).copied();
+        if let (Some(&(fx, fy, fw, fh)), Some(&(tx, ty, tw, _)), Some(fi), Some(ti)) =
+            (src, dst, fb, tb)
+        {
+            let sx = fx + fw / 2.0;
+            let dx = tx + tw / 2.0;
+
+            let path = if fi == ti {
+                let below = band_y[fi] + band_heights[fi] + band_gap * 0.45;
+                format!("M {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1}",
+                    sx, fy + fh, sx, below, dx, below, dx, ty)
+            } else if fi < ti {
+                let gap_mid = band_y[fi] + band_heights[fi] + band_gap / 2.0;
+                format!("M {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1}",
+                    sx, fy + fh, sx, gap_mid, dx, gap_mid, dx, ty)
+            } else {
+                let rx = canvas_w - margin * 0.35;
+                let y1 = fy + fh / 2.0;
+                let y2 = ty + band_heights[ti].min(50.0) / 2.0;
+                format!("M {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1}",
+                    fx + fw, y1, rx, y1, rx, y2, tx + tw, y2)
+            };
+
+            let is_viol = diagram.violations.contains(&(from_id.clone(), to_id.clone()));
+            let (stroke, dasharray, width) = if is_viol {
+                ("#cc2222", "none", "2.5")
+            } else {
+                ("#666666", "6,3", "1.5")
+            };
+            body.push_str(&format!(
+                "  <path d=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" \
+                 stroke-dasharray=\"{}\" marker-end=\"url(#arr)\"/>\n",
+                path, stroke, width, dasharray
+            ));
+            if is_viol {
+                // Mini violation label at midpoint of path
+                let lx = (sx + dx) / 2.0;
+                let ly = if fi == ti {
+                    band_y[fi] + band_heights[fi] + band_gap * 0.45 - 4.0
+                } else if fi < ti {
+                    band_y[fi] + band_heights[fi] + band_gap / 2.0 - 4.0
+                } else {
+                    (fy + fh / 2.0 + ty + band_heights[ti].min(50.0) / 2.0) / 2.0 - 4.0
+                };
+                body.push_str(&format!(
+                    "  <text x=\"{lx:.1}\" y=\"{ly:.1}\" text-anchor=\"middle\" \
+                     style=\"font-size:10px;fill:#cc2222;font-weight:bold\">\u{26a0} violation</text>\n"
+                ));
+            }
+        }
+    }
+
+    // ── Module boxes (drawn on top) ───────────────────────────────────────────
+    for (_, grp) in &band_groups {
+        for m in grp {
+            if let Some(&(mx, my, mw, mh)) = mod_rect.get(m.id.as_str()) {
+                let layer = m.layer;
+                // Box background
+                body.push_str(&format!(
+                    "  <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"5\" \
+                     fill=\"{}\" stroke=\"{}\" stroke-width=\"1.5\"/>\n",
+                    mx, my, mw, mh, layer.box_color(), layer.border_color()
+                ));
+                // Header fill (covers the rounded-corner overlap)
+                body.push_str(&format!(
+                    "  <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"5\" \
+                     fill=\"{}\"/>\n  \
+                     <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"5\" fill=\"{}\"/>\n",
+                    mx, my, mw, hdr_h, layer.border_color(),
+                    mx, my + hdr_h - 4.0, mw, layer.border_color()
+                ));
+                // Module name in header
+                body.push_str(&format!(
+                    "  <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" \
+                     style=\"fill:white;font-weight:bold;font-size:12px\">{}</text>\n",
+                    mx + mw / 2.0, my + hdr_h / 2.0 + 5.0,
+                    xml_escape(&m.label)
+                ));
+                // Class rows
+                for (j, cls) in m.classes.iter().enumerate() {
+                    body.push_str(&format!(
+                        "  <text x=\"{:.1}\" y=\"{:.1}\" \
+                         style=\"font-size:10px;fill:#444\">{}</text>\n",
+                        mx + 8.0,
+                        my + hdr_h + (j as f64 + 1.0) * cls_h - 3.0,
+                        xml_escape(cls)
+                    ));
+                }
+            }
+        }
+    }
+
+    with_title(title, canvas_w, canvas_h, &body)
+}
+
+// ---------------------------------------------------------------------------
+// Dependency diagram (package / module level)
+// ---------------------------------------------------------------------------
+
+fn render_dependency(title: &str, diagram: &DependencyDiagram) -> String {
+    if diagram.packages.is_empty() {
+        return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"300\" height=\"80\">\
+                <text x=\"10\" y=\"40\">No packages</text></svg>".to_string();
+    }
+
+    let margin      = 28.0_f64;
+    let pkg_min_w   = 140.0_f64;
+    let hpad        = 16.0_f64;
+    let pkg_h       = 30.0_f64;
+    let pkg_gap     = 16.0_f64;
+    let band_lbl_h  = 20.0_f64;
+    let band_vpad   = 10.0_f64;
+    let band_gap    = 48.0_f64;
+
+    let pkg_w = |p: &crate::diagram::dependency::PackageNode| -> f64 {
+        f64::max(pkg_min_w, text_width(&p.label) + hpad * 2.0)
+    };
+
+    let mut band_groups: Vec<(Layer, Vec<&crate::diagram::dependency::PackageNode>)> = Vec::new();
+    for layer in Layer::all_ordered() {
+        let grp: Vec<_> = diagram.packages.iter().filter(|p| p.layer == layer).collect();
+        if !grp.is_empty() {
+            band_groups.push((layer, grp));
+        }
+    }
+    let n_bands = band_groups.len();
+
+    let band_cw = |grp: &[&crate::diagram::dependency::PackageNode]| -> f64 {
+        let w: f64 = grp.iter().map(|p| pkg_w(p)).sum();
+        w + grp.len().saturating_sub(1) as f64 * pkg_gap
+    };
+    let max_cw = band_groups.iter().map(|(_, g)| band_cw(g)).fold(300.0_f64, f64::max);
+    let canvas_w = max_cw + 2.0 * margin;
+
+    let band_heights: Vec<f64> = band_groups.iter()
+        .map(|_| pkg_h + band_lbl_h + band_vpad * 2.0)
+        .collect();
+
+    let mut band_y: Vec<f64> = Vec::with_capacity(n_bands);
+    let mut y_acc = margin;
+    for (i, h) in band_heights.iter().enumerate() {
+        band_y.push(y_acc);
+        y_acc += h + if i + 1 < n_bands { band_gap } else { 0.0 };
+    }
+    let canvas_h = y_acc + margin;
+
+    let mut pkg_rect: HashMap<&str, (f64, f64, f64)> = HashMap::new();
+    let mut pkg_band: HashMap<&str, usize>            = HashMap::new();
+
+    for (bi, (_, grp)) in band_groups.iter().enumerate() {
+        let cw = band_cw(grp);
+        let by = band_y[bi];
+        let py = by + band_lbl_h + band_vpad;
+        let mut x = (canvas_w - cw) / 2.0;
+        for p in grp {
+            let pw = pkg_w(p);
+            pkg_rect.insert(p.id.as_str(), (x, py, pw));
+            pkg_band.insert(p.id.as_str(), bi);
+            x += pw + pkg_gap;
+        }
+    }
+
+    let mut body = String::new();
+
+    // band backgrounds
+    for (bi, (layer, _)) in band_groups.iter().enumerate() {
+        let bx = margin / 2.0;
+        let bw = canvas_w - margin;
+        let by = band_y[bi];
+        let bh = band_heights[bi];
+        body.push_str(&format!(
+            "  <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"6\" \
+             fill=\"{}\" stroke=\"{}\" stroke-width=\"1.5\"/>\n  \
+             <text x=\"{:.1}\" y=\"{:.1}\" \
+             style=\"font-size:10px;font-weight:bold;fill:{}\">\u{ab}{}\u{bb}</text>\n",
+            bx, by, bw, bh, layer.band_color(), layer.border_color(),
+            bx + 8.0, by + 14.0, layer.border_color(), layer.label()
+        ));
+    }
+
+    // dependency edges
+    for edge in &diagram.edges {
+        let (Some(&(fx, fy, fw)), Some(&(tx, ty, tw))) = (
+            pkg_rect.get(edge.from.as_str()),
+            pkg_rect.get(edge.to.as_str()),
+        ) else { continue };
+        let (Some(fi), Some(ti)) = (
+            pkg_band.get(edge.from.as_str()).copied(),
+            pkg_band.get(edge.to.as_str()).copied(),
+        ) else { continue };
+
+        let sx = fx + fw / 2.0;
+        let dx = tx + tw / 2.0;
+
+        let path = if fi == ti {
+            let below = band_y[fi] + band_heights[fi] + band_gap * 0.4;
+            format!("M {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1}",
+                sx, fy + pkg_h, sx, below, dx, below, dx, ty)
+        } else if fi < ti {
+            let gap_mid = band_y[fi] + band_heights[fi] + band_gap / 2.0;
+            format!("M {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1}",
+                sx, fy + pkg_h, sx, gap_mid, dx, gap_mid, dx, ty)
+        } else {
+            let rx = canvas_w - margin * 0.3;
+            let y1 = fy + pkg_h / 2.0;
+            let y2 = ty + pkg_h / 2.0;
+            format!("M {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1} L {:.1},{:.1}",
+                fx + fw, y1, rx, y1, rx, y2, tx + tw, y2)
+        };
+
+        let (stroke, dash, width) = if edge.is_violation {
+            ("#cc2222", "none", 2.5_f64)
+        } else if edge.via_spring {
+            ("#2266aa", "6,3", 1.5_f64)
+        } else {
+            ("#888888", "5,3", 1.5_f64)
+        };
+
+        body.push_str(&format!(
+            "  <path d=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{:.1}\" \
+             stroke-dasharray=\"{}\" marker-end=\"url(#arr)\"/>\n",
+            path, stroke, width, dash
+        ));
+
+        let mid_x = (sx + dx) / 2.0;
+        let mid_y = if fi == ti {
+            band_y[fi] + band_heights[fi] + band_gap * 0.4 - 5.0
+        } else if fi < ti {
+            band_y[fi] + band_heights[fi] + band_gap / 2.0 - 5.0
+        } else {
+            (fy + pkg_h / 2.0 + ty + pkg_h / 2.0) / 2.0 - 5.0
+        };
+        let label = if edge.is_violation { "\u{26a0} violation" }
+                    else if edge.via_spring { "\u{ab}inject\u{bb}" }
+                    else { "" };
+        if !label.is_empty() {
+            body.push_str(&format!(
+                "  <text x=\"{mid_x:.1}\" y=\"{mid_y:.1}\" text-anchor=\"middle\" \
+                 style=\"font-size:9px;fill:{stroke};font-weight:bold\">{label}</text>\n"
+            ));
+        }
+    }
+
+    // package boxes
+    for (_, grp) in &band_groups {
+        for p in grp {
+            if let Some(&(px, py, pw)) = pkg_rect.get(p.id.as_str()) {
+                let layer = p.layer;
+                body.push_str(&format!(
+                    "  <rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" rx=\"4\" \
+                     fill=\"{}\" stroke=\"{}\" stroke-width=\"1.5\"/>\n  \
+                     <text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" \
+                     style=\"font-size:11px;font-weight:bold;fill:{}\">{}</text>\n",
+                    px, py, pw, pkg_h, layer.box_color(), layer.border_color(),
+                    px + pw / 2.0, py + pkg_h / 2.0 + 4.0,
+                    layer.border_color(), xml_escape(&p.label)
+                ));
+            }
+        }
+    }
+
+    with_title(title, canvas_w, canvas_h, &body)
 }
