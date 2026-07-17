@@ -1,5 +1,5 @@
 use clap::{ArgGroup, Parser};
-use std::process;
+use std::{io, process};
 
 mod db;
 mod finder;
@@ -113,6 +113,16 @@ fn default_jar_path() -> String {
 }
 
 fn main() {
+    // If codemole is invoked without arguments, launch the desktop frontend.
+    // Any provided arguments keep the existing CLI behavior.
+    if std::env::args_os().len() == 1 {
+        if let Err(err) = launch_desktop_frontend() {
+            eprintln!("error: cannot launch desktop frontend: {}", err);
+            process::exit(1);
+        }
+        return;
+    }
+
     let cli = Cli::parse();
 
     // 1. Initialise the skip-symbol database
@@ -169,6 +179,36 @@ fn main() {
     println!("  classflow.dot    classflow.svg   classflowViewer.html");
     println!("  component.dot    component.svg   componentViewer.html");
     println!("  dependency.dot   dependency.svg  dependencyViewer.html");
+}
+
+fn launch_desktop_frontend() -> io::Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let exe_dir = current_exe.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "cannot resolve executable directory",
+        )
+    })?;
+
+    #[cfg(target_os = "windows")]
+    let desktop_exe_name = "codemole-desktop.exe";
+
+    #[cfg(not(target_os = "windows"))]
+    let desktop_exe_name = "codemole-desktop";
+
+    let desktop_exe = exe_dir.join(desktop_exe_name);
+    if !desktop_exe.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "desktop executable not found at '{}'",
+                desktop_exe.display()
+            ),
+        ));
+    }
+
+    process::Command::new(desktop_exe).spawn()?;
+    Ok(())
 }
 
 /// Resolves CLI arguments into an `EntryPoint` and a human-readable label.
